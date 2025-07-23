@@ -119,6 +119,8 @@ except ImportError:
     TableEditDialog = None
 
 from group_by_dialog import GroupByDialog
+from python_page import PythonPage
+from ai_page import AIPage
 
 class TableManagerDialog(QDialog):
     def __init__(self, main_window):
@@ -149,12 +151,26 @@ class TableManagerDialog(QDialog):
         self.table_tree.setMaximumHeight(16777215)
         self.table_tree.itemSelectionChanged.connect(self.main_window.on_table_selected)
         self.table_tree.installEventFilter(self.main_window)
+        
+        # Настройка перетаскивания элементов
+        self.table_tree.setDragEnabled(True)
+        self.table_tree.setAcceptDrops(True)
+        self.table_tree.setDropIndicatorShown(True)
+        self.table_tree.setDragDropMode(QTreeWidget.InternalMove)
+        
+        # Настройка контекстного меню
+        self.table_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table_tree.customContextMenuRequested.connect(self.show_context_menu)
+        
         layout.addWidget(self.table_tree, 1)
         self.setLayout(layout)
         self.update_table_selector()
         # --- Geometry persistence ---
         self._settings = QSettings('csvQuery', 'TableManagerDialog')
         self.restore_geometry()
+        
+        # Сохранение информации о перетаскиваемом элементе
+        self.drag_source_item = None
 
     def closeEvent(self, event):
         self.save_geometry()
@@ -186,24 +202,91 @@ class TableManagerDialog(QDialog):
         tables = [row[0] for row in cur.fetchall()]
         for t in tables:
             item = QTreeWidgetItem([t])
-            item.setFlags(item.flags() | Qt.ItemIsEditable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            item.setFlags(item.flags() | Qt.ItemIsEditable | Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)
             self.table_tree.addTopLevelItem(item)
         self.table_tree.blockSignals(False)
+        
+    def show_context_menu(self, position):
+        items = self.table_tree.selectedItems()
+        if not items:
+            return
+            
+        # Создаем контекстное меню
+        menu = QMenu()
+        
+        # Добавляем действия для работы с таблицами
+        edit_action = menu.addAction("Редактировать таблицу")
+        rename_action = menu.addAction("Переименовать таблицу")
+        delete_action = menu.addAction("Удалить таблицу")
+        
+        # Добавляем разделитель
+        menu.addSeparator()
+        
+        # Добавляем действие для сравнения таблиц
+        compare_action = None
+        if len(items) == 2:
+            compare_action = menu.addAction("Сравнить таблицы")
+        elif len(self.table_tree.selectedItems()) == 1:
+            # Подменю для выбора второй таблицы для сравнения
+            compare_submenu = menu.addMenu("Сравнить с...")
+            current_table = items[0].text(0)
+            
+            # Получаем список всех таблиц
+            all_tables = []
+            for i in range(self.table_tree.topLevelItemCount()):
+                table_name = self.table_tree.topLevelItem(i).text(0)
+                if table_name != current_table:
+                    all_tables.append(table_name)
+            
+            # Добавляем действия для каждой таблицы
+            compare_actions = {}
+            for table in all_tables:
+                compare_actions[table] = compare_submenu.addAction(table)
+        
+        # Показываем меню и получаем выбранное действие
+        action = menu.exec_(self.table_tree.mapToGlobal(position))
+        
+        # Обрабатываем выбранное действие
+        if action == edit_action:
+            self.open_table_edit_dialog()
+        elif action == rename_action:
+            self.main_window.rename_current_table()
+        elif action == delete_action:
+            self.main_window.delete_current_table()
+        elif compare_action and action == compare_action:
+            # Сравнение двух выбранных таблиц
+            table_a = items[0].text(0)
+            table_b = items[1].text(0)
+            self.main_window.compare_tables(table_a, table_b)
+        elif action in compare_actions.values() if 'compare_actions' in locals() else []:
+            # Сравнение с выбранной таблицей из подменю
+            table_a = items[0].text(0)
+            table_b = [t for t, a in compare_actions.items() if a == action][0]
+            self.main_window.compare_tables(table_a, table_b)
 
 class OptionsDialog(QDialog):
-    def __init__(self, parent, confirm_on_exit):
+    def __init__(self, parent, confirm_on_exit, convert_first_row_to_headers=False):
         super().__init__(parent)
         self.setWindowTitle('Опции')
         layout = QVBoxLayout(self)
         self.confirm_exit_checkbox = QtCheckBox('Запрашивать подтверждение при выходе')
         self.confirm_exit_checkbox.setChecked(confirm_on_exit)
         layout.addWidget(self.confirm_exit_checkbox)
+        
+        self.convert_headers_checkbox = QtCheckBox('Преобразовывать первую строку в имена колонок при вставке')
+        self.convert_headers_checkbox.setChecked(convert_first_row_to_headers)
+        layout.addWidget(self.convert_headers_checkbox)
+        
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.accepted.connect(self.accept)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
+        
     def get_confirm_on_exit(self):
         return self.confirm_exit_checkbox.isChecked()
+        
+    def get_convert_first_row_to_headers(self):
+        return self.convert_headers_checkbox.isChecked()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -211,6 +294,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("CSV Query Tool (PyQt5)")
         self.resize(900, 600)
         self.tabs = QTabWidget()
+        self.tabs.tabBar().hide()
         self.setCentralWidget(self.tabs)
         self.confirm_on_exit = True
         self.load_settings()
@@ -223,6 +307,7 @@ class MainWindow(QMainWindow):
         self.visible_columns = []  # Indices of columns currently visible
         self.advanced_search_settings = None
         self.table_manager_dialog = None
+        self.compare_dialog = None  # Для хранения ссылки на окно сравнения таблиц
 
     def init_toolbar(self):
         toolbar = QToolBar()
@@ -236,6 +321,12 @@ class MainWindow(QMainWindow):
         self.sql_tab_btn = QPushButton('SQL')
         self.sql_tab_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
         toolbar.addWidget(self.sql_tab_btn)
+        self.python_tab_btn = QPushButton('Python')
+        self.python_tab_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
+        toolbar.addWidget(self.python_tab_btn)
+        self.ai_tab_btn = QPushButton('AI')
+        self.ai_tab_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(3))
+        toolbar.addWidget(self.ai_tab_btn)
         # Spacer to push menu to the right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -250,12 +341,15 @@ class MainWindow(QMainWindow):
         new_action = QAction('Новая сессия', self)
         new_action.triggered.connect(self.new_session)
         file_menu.addAction(new_action)
+
+        open_action = QAction('Открыть сессию', self)
+        open_action.triggered.connect(self.open_session)
+        file_menu.addAction(open_action)        
+        
         save_action = QAction('Сохранить сессию', self)
         save_action.triggered.connect(self.save_session)
         file_menu.addAction(save_action)
-        open_action = QAction('Открыть сессию', self)
-        open_action.triggered.connect(self.open_session)
-        file_menu.addAction(open_action)
+        
         file_menu.addSeparator()
         exit_action = QAction('Выход', self)
         exit_action.triggered.connect(self.close)
@@ -287,12 +381,20 @@ class MainWindow(QMainWindow):
                 with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 self.confirm_on_exit = bool(data.get('confirm_on_exit', True))
+                self.convert_first_row_to_headers = bool(data.get('convert_first_row_to_headers', False))
             except Exception:
                 self.confirm_on_exit = True
+                self.convert_first_row_to_headers = False
+        else:
+            self.confirm_on_exit = True
+            self.convert_first_row_to_headers = False
     def save_settings(self):
         try:
             with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-                json.dump({'confirm_on_exit': self.confirm_on_exit}, f, ensure_ascii=False, indent=2)
+                json.dump({
+                    'confirm_on_exit': self.confirm_on_exit,
+                    'convert_first_row_to_headers': self.convert_first_row_to_headers
+                }, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
     def init_menu(self):
@@ -374,7 +476,7 @@ class MainWindow(QMainWindow):
                         self.sqlite_conn.close()
                     import sqlite3
                     self.sqlite_conn = sqlite3.connect(db_path)
-                    os.remove(db_path)
+                    # Не удаляем файл базы данных, так как он нужен для работы приложения
                 sql_page = getattr(self, 'sql_tab', None)
                 if sql_page and os.path.exists(history_path):
                     with open(history_path, "r", encoding="utf-8") as f:
@@ -383,12 +485,12 @@ class MainWindow(QMainWindow):
                         sql_page.history_dialog.update_history_tree()
                     if hasattr(sql_page, 'results_dialog') and sql_page.results_dialog:
                         sql_page.results_dialog.update_results_view()
-                    os.remove(history_path)
+                    # Не удаляем файл истории, так как он может понадобиться позже
                 # Переключить на вкладку SQL, если есть
-                if hasattr(self, 'tabs') and hasattr(self, 'sql_tab'):
-                    idx = self.tabs.indexOf(self.sql_tab)
-                    if idx != -1:
-                        self.tabs.setCurrentIndex(idx)
+                # if hasattr(self, 'tabs') and hasattr(self, 'sql_tab'):
+                #    idx = self.tabs.indexOf(self.sql_tab)
+                #    if idx != -1:
+                #        self.tabs.setCurrentIndex(idx)
                 QMessageBox.information(self, 'Открытие', 'Сессия успешно загружена!')
             except Exception as e:
                 QMessageBox.critical(self, 'Ошибка', f'Ошибка при открытии сессии: {e}')
@@ -406,8 +508,12 @@ class MainWindow(QMainWindow):
     def init_tabs(self):
         self.csv_tab = QWidget()
         self.sql_tab = SQLQueryPage()
+        self.python_tab = PythonPage(self)
+        self.ai_tab = AIPage(self)
         self.tabs.addTab(self.csv_tab, "CSV")
         self.tabs.addTab(self.sql_tab, "SQL")
+        self.tabs.addTab(self.python_tab, "Python")
+        self.tabs.addTab(self.ai_tab, "AI")
         self.init_csv_tab()
 
     def init_csv_tab(self):
@@ -425,10 +531,7 @@ class MainWindow(QMainWindow):
         self.csv_import_btn = QPushButton("Импортировать CSV")
         self.csv_import_btn.clicked.connect(self.import_csv)
         top_layout.addWidget(self.csv_import_btn)
-        # --- Кнопка Поместить в таблицу ---
-        self.place_to_table_btn = QPushButton("Поместить в таблицу")
-        self.place_to_table_btn.clicked.connect(self.place_to_sqlite_table)
-        top_layout.addWidget(self.place_to_table_btn)
+
         # --- Нижний блок: всё остальное ---
         bottom_widget = QWidget()
         bottom_layout = QVBoxLayout(bottom_widget)
@@ -437,8 +540,19 @@ class MainWindow(QMainWindow):
         self.csv_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.csv_table.customContextMenuRequested.connect(self.show_table_context_menu)
         self.csv_table.installEventFilter(self)
+        # Отслеживание изменений в таблице
+        self.csv_table.itemChanged.connect(self.on_table_item_changed)
+        self.table_modified = False
+        self.original_place_btn_text = "Поместить в таблицу"
+        
+        search_layout = QHBoxLayout()        
+        # --- Кнопка Поместить в таблицу ---
+        self.place_to_table_btn = QPushButton(QIcon('icons/save.png'), "Поместить в таблицу")
+        self.place_to_table_btn.clicked.connect(self.place_to_sqlite_table)
+        search_layout.addWidget(self.place_to_table_btn)     
+        
         # --- Кнопки поиска, импорта, экспорта, видимости столбцов ---
-        search_layout = QHBoxLayout()
+
         search_layout.addWidget(QLabel("Поиск:"))
         self.search_edit = QLineEdit()
         self.search_edit.textChanged.connect(self.filter_csv_table)
@@ -510,15 +624,54 @@ class MainWindow(QMainWindow):
         self.filtered_indices = list(range(len(self.csv_data)))
         self.visible_columns = list(range(len(self.csv_headers)))
         self.update_csv_table()
+        # Сбросить флаг изменения при загрузке новой таблицы
+        self.reset_table_modified()
 
     def eventFilter(self, source, event):
         if not hasattr(self, 'csv_table'):
             return super().eventFilter(source, event)
         table_tree = getattr(self.table_manager_dialog, 'table_tree', None) if hasattr(self, 'table_manager_dialog') else None
-        if table_tree is not None and source == table_tree and event.type() == event.KeyPress:
-            if event.key() == Qt.Key_F2:
-                self.rename_current_table()
-                return True
+        
+        # Обработка событий для дерева таблиц
+        if table_tree is not None and source == table_tree:
+            # Обработка нажатия клавиш
+            if event.type() == event.KeyPress:
+                if event.key() == Qt.Key_F2:
+                    self.rename_current_table()
+                    return True
+            
+            # Обработка событий мыши для перетаскивания
+            elif event.type() == event.MouseButtonPress and event.button() == Qt.RightButton:
+                # Запоминаем элемент, на котором была нажата правая кнопка мыши
+                item = table_tree.itemAt(event.pos())
+                if item:
+                    self.table_manager_dialog.drag_source_item = item
+                    return False  # Продолжаем обработку события для показа контекстного меню
+            
+            elif event.type() == event.MouseMove and event.buttons() & Qt.RightButton:
+                # Если перетаскивание правой кнопкой мыши и есть исходный элемент
+                if hasattr(self.table_manager_dialog, 'drag_source_item') and self.table_manager_dialog.drag_source_item:
+                    # Можно добавить визуальные эффекты перетаскивания, если нужно
+                    return False
+            
+            elif event.type() == event.MouseButtonRelease and event.button() == Qt.RightButton:
+                # Если отпущена правая кнопка мыши и был исходный элемент
+                if hasattr(self.table_manager_dialog, 'drag_source_item') and self.table_manager_dialog.drag_source_item:
+                    # Получаем элемент, над которым отпущена кнопка
+                    target_item = table_tree.itemAt(event.pos())
+                    
+                    # Если есть целевой элемент и он отличается от исходного
+                    if target_item and target_item != self.table_manager_dialog.drag_source_item:
+                        # Получаем имена таблиц
+                        source_table = self.table_manager_dialog.drag_source_item.text(0)
+                        target_table = target_item.text(0)
+                        
+                        # Сравниваем таблицы
+                        self.compare_tables(source_table, target_table)
+                    
+                    # Сбрасываем исходный элемент
+                    self.table_manager_dialog.drag_source_item = None
+                    return True
         if source == self.csv_table:
             if event.type() == event.KeyPress:
                 if event.matches(QKeySequence.Copy):
@@ -527,14 +680,77 @@ class MainWindow(QMainWindow):
                 elif event.matches(QKeySequence.Paste):
                     self.paste_table_selection()
                     return True
+                elif event.key() == Qt.Key_Delete:
+                    self.delete_selected_rows()
+                    return True
+                elif event.key() == Qt.Key_Insert:
+                    self.insert_selected_rows()
+                    return True
                 elif event.modifiers() == Qt.ControlModifier and (event.key() == Qt.Key_Minus or event.key() == 0x1000004d): #KeypadSubstract
-                    self.delete_selected_area()
+                    self.delete_selected_rows()
                     return True
                 elif event.modifiers() == Qt.ControlModifier and (event.key() == Qt.Key_Plus or event.key() == 0x1000004b): #KeypadAdd
-                    self.add_selected_area()
+                    self.insert_selected_rows()
                     return True
         return super().eventFilter(source, event)
 
+    def delete_selected_rows(self):
+        sel = self.csv_table.selectedRanges()
+        if not sel:
+            return
+        
+        rng = sel[0]
+        rows_to_delete = rng.bottomRow() - rng.topRow() + 1
+        
+        # Подтверждение удаления
+        from PyQt5.QtWidgets import QMessageBox
+        reply = QMessageBox.question(self, "Удаление строк", 
+                                   f"Удалить {rows_to_delete} строк(и)?", 
+                                   QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        
+        # Удаляем строки в обратном порядке
+        for row in reversed(range(rng.topRow(), rng.bottomRow() + 1)):
+            self.csv_table.removeRow(row)
+        
+        self.mark_table_modified()
+
+    def insert_selected_rows(self):
+        sel = self.csv_table.selectedRanges()
+        if not sel:
+            # Если ничего не выделено, добавить строку в конец
+            if self.csv_table.columnCount() > 0:
+                self.csv_table.insertRow(self.csv_table.rowCount())
+                self.mark_table_modified()
+            return
+        
+        rng = sel[0]
+        rows_to_insert = rng.bottomRow() - rng.topRow() + 1
+        
+        # Вставляем строки после выделенной области
+        insert_position = rng.bottomRow() + 1
+        for i in range(rows_to_insert):
+            self.csv_table.insertRow(insert_position + i)
+        
+        self.mark_table_modified()
+
+    def on_table_item_changed(self, item):
+        """Обработчик изменения элемента таблицы"""
+        self.mark_table_modified()
+    
+    def mark_table_modified(self):
+        """Отметить таблицу как измененную"""
+        if not self.table_modified:
+            self.table_modified = True
+            self.place_to_table_btn.setText('Save *')
+    
+    def reset_table_modified(self):
+        """Сбросить флаг изменения таблицы"""
+        self.table_modified = False
+        self.place_to_table_btn.setText(self.original_place_btn_text)
+
+    #//М-Тех Глазунов В.А. 07.2025  VSMRTRTL-6  ((( 
     def delete_selected_area(self):
         sel = self.csv_table.selectedRanges()
         if not sel:
@@ -564,6 +780,7 @@ class MainWindow(QMainWindow):
             insert_col = rng.rightColumn() + 1
             self.csv_table.insertColumn(insert_col)
             self.csv_table.setHorizontalHeaderItem(insert_col, QTableWidgetItem(f"col{insert_col+1}"))
+    #//М-Тех Глазунов В.А. 07.2025  VSMRTRTL-6  )))
 
     def copy_table_selection(self):
         selection = self.csv_table.selectedRanges()
@@ -590,8 +807,24 @@ class MainWindow(QMainWindow):
         # Добавить строки/столбцы при необходимости
         start_row = self.csv_table.currentRow() if self.csv_table.currentRow() != -1 else 0
         start_col = self.csv_table.currentColumn() if self.csv_table.currentColumn() != -1 else 0
+        
+        # Проверяем, нужно ли преобразовать первую строку в заголовки
+        if self.convert_first_row_to_headers and data and start_row == 0 and start_col == 0:
+            # Получаем первую строку для использования в качестве заголовков
+            headers_row = data[0]
+            # Преобразуем заголовки в допустимые имена колонок SQLite
+            valid_headers = make_unique_headers(headers_row)
+            # Устанавливаем заголовки в таблицу
+            max_col = start_col + len(valid_headers)
+            if self.csv_table.columnCount() < max_col:
+                self.csv_table.setColumnCount(max_col)
+            for j, header in enumerate(valid_headers):
+                self.csv_table.setHorizontalHeaderItem(start_col + j, QTableWidgetItem(header))
+            # Используем оставшиеся строки как данные
+            data = data[1:]
+        
         max_row = start_row + len(data)
-        max_col = start_col + max(len(r) for r in data)
+        max_col = start_col + max(len(r) for r in data) if data else 0
         if self.csv_table.rowCount() < max_row:
             self.csv_table.setRowCount(max_row)
         if self.csv_table.columnCount() < max_col:
@@ -604,11 +837,13 @@ class MainWindow(QMainWindow):
         self.update_internal_data_from_table()
         self.load_table_to_sqlite(table_name)
         self.update_table_selector()
-        for i in range(self.table_manager_dialog.table_tree.topLevelItemCount()):
-            item = self.table_manager_dialog.table_tree.topLevelItem(i)
-            if item.text(0) == table_name:
-                self.table_manager_dialog.table_tree.setCurrentItem(item)
-                break
+        # Проверяем, инициализирован ли table_manager_dialog перед использованием
+        if hasattr(self, 'table_manager_dialog') and self.table_manager_dialog is not None:
+            for i in range(self.table_manager_dialog.table_tree.topLevelItemCount()):
+                item = self.table_manager_dialog.table_tree.topLevelItem(i)
+                if item.text(0) == table_name:
+                    self.table_manager_dialog.table_tree.setCurrentItem(item)
+                    break
         self.load_sqlite_table_to_widget(table_name)
 
     def update_internal_data_from_table(self):
@@ -1041,11 +1276,42 @@ class MainWindow(QMainWindow):
         self.table_manager_dialog.show()
         self.table_manager_dialog.raise_()
         self.table_manager_dialog.activateWindow() 
+        
+    def compare_tables(self, table_a, table_b):
+        """Открывает диалог сравнения двух таблиц"""
+        try:
+            # Импортируем модуль для сравнения таблиц
+            from table_compare_dialog import TableCompareDialog
+            
+            # Проверяем, что обе таблицы существуют
+            if not self.sqlite_conn:
+                QMessageBox.warning(self, "Предупреждение", "Нет активного соединения с базой данных")
+                return
+                
+            cur = self.sqlite_conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)", (table_a, table_b))
+            tables = [row[0] for row in cur.fetchall()]
+            
+            if len(tables) < 2:
+                QMessageBox.warning(self, "Предупреждение", f"Одна или обе таблицы не существуют: {table_a}, {table_b}")
+                return
+            
+            # Создаем и показываем окно сравнения
+            self.compare_dialog = TableCompareDialog(self.sqlite_conn, table_a, table_b, None)
+            self.compare_dialog.show()  # Используем show() для немодального окна
+            self.compare_dialog.raise_()
+            self.compare_dialog.activateWindow()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть диалог сравнения таблиц: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def open_options_dialog(self):
-        dlg = OptionsDialog(self, self.confirm_on_exit)
+        dlg = OptionsDialog(self, self.confirm_on_exit, self.convert_first_row_to_headers)
         if dlg.exec_() == QDialog.Accepted:
             self.confirm_on_exit = dlg.get_confirm_on_exit()
+            self.convert_first_row_to_headers = dlg.get_convert_first_row_to_headers()
             self.save_settings()
 
     def import_excel(self):
@@ -1106,6 +1372,8 @@ class MainWindow(QMainWindow):
         # Поместить в sqlite
         self.load_table_to_sqlite_with_data(name, headers, data)
         self.update_table_selector()
+        # Сбросить флаг изменения таблицы
+        self.reset_table_modified()
         QMessageBox.information(self, "Готово", f"Данные помещены в таблицу '{name}'") 
 
     def load_table_to_sqlite_with_data(self, table_name, headers, data):
@@ -1127,4 +1395,4 @@ class MainWindow(QMainWindow):
         self.sqlite_conn.commit()
         # Pass connection to SQL tab (if needed)
         if hasattr(self.sql_tab, 'set_connection'):
-            self.sql_tab.set_connection(self.sqlite_conn) 
+            self.sql_tab.set_connection(self.sqlite_conn)

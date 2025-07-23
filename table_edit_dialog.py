@@ -86,16 +86,26 @@ class TableEditDialog(QDialog):
         dcur.execute(f'PRAGMA table_info("{self.table_name}")')
         schema = dcur.fetchall()
         print('Структура таблицы после добавления PK:', schema)
-        cur.execute(f'SELECT * FROM "{self.table_name}"')
+        # Определяем исходные колонки из основной БД
+        cur.execute(f'PRAGMA table_info("{self.table_name}")')
+        src_schema = cur.fetchall()
+        src_columns = [row[1] for row in src_schema]
+        src_col_names = ', '.join([f'"{col}"' for col in src_columns])
+
+        cur.execute(f'SELECT {src_col_names} FROM "{self.table_name}"')
         rows = cur.fetchall()
         print(f"Копируем {len(rows)} строк в {self.table_name}")
+
+        # Определяем целевые колонки во временной таблице (могут отличаться, если был добавлен __rowid)
+        dcur.execute(f'PRAGMA table_info("{self.table_name}")')
+        dst_schema = dcur.fetchall()
+        dst_columns = [row[1] for row in dst_schema if row[1] in src_columns]
+        dst_col_names = ', '.join([f'"{col}"' for col in dst_columns])
+
         try:
             if rows:
-                # Вставлять только в исходные колонки (без __rowid)
-                orig_columns = [row[1] for row in schema if row[1] != '__rowid']
-                col_names = ', '.join([f'"{col}"' for col in orig_columns])
-                placeholders = ','.join(['?'] * len(orig_columns))
-                dcur.executemany(f'INSERT INTO "{self.table_name}" ({col_names}) VALUES ({placeholders})', rows)
+                placeholders = ','.join(['?'] * len(dst_columns))
+                dcur.executemany(f'INSERT INTO "{self.table_name}" ({dst_col_names}) VALUES ({placeholders})', rows)
         except Exception as e:
             print(f'Ошибка при вставке строк: {e}')
         dst.commit()
@@ -110,22 +120,33 @@ class TableEditDialog(QDialog):
         src = sqlite3.connect(self._tmp_dbfile.name)
         dst = self.sqlite_conn
         cur = dst.cursor()
-        # Удалить старую таблицу
-        cur.execute(f'DROP TABLE IF EXISTS "{self.table_name}"')
-        # Получить SQL создания таблицы
         scur = src.cursor()
+
+        # Получить схему и данные из временной таблицы
+        scur.execute(f'PRAGMA table_info("{self.table_name}")')
+        schema = scur.fetchall()
+        columns = [row[1] for row in schema]
+        col_names_str = ', '.join([f'"{col}"' for col in columns])
+        
+        scur.execute(f'SELECT {col_names_str} FROM "{self.table_name}"')
+        rows = scur.fetchall()
+
+        # Получить SQL создания таблицы из временной БД
         scur.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (self.table_name,))
         create_sql = scur.fetchone()
         if not create_sql:
             src.close()
             return
+
+        # Удалить старую таблицу и создать новую в основной БД
+        cur.execute(f'DROP TABLE IF EXISTS "{self.table_name}"')
         cur.execute(create_sql[0])
+
         # Копировать данные
-        scur.execute(f'SELECT * FROM "{self.table_name}"')
-        rows = scur.fetchall()
         if rows:
-            placeholders = ','.join(['?'] * len(rows[0]))
-            cur.executemany(f'INSERT INTO "{self.table_name}" VALUES ({placeholders})', rows)
+            placeholders = ','.join(['?'] * len(columns))
+            cur.executemany(f'INSERT INTO "{self.table_name}" ({col_names_str}) VALUES ({placeholders})', rows)
+        
         dst.commit()
         src.close()
 
@@ -168,7 +189,42 @@ class TableEditDialog(QDialog):
         reply = QMessageBox.question(self, 'Удалить столбец', f'Удалить столбец "{col_name}"? Это действие необратимо.', QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
-        QMessageBox.information(self, 'Удаление столбца', 'Удаление столбцов поддерживается только вручную через SQL.')
+        try:
+            db = sqlite3.connect(self._tmp_dbfile.name)
+            cur = db.cursor()
+
+            # 1. Get schema of the original table
+            cur.execute(f'PRAGMA table_info("{self.table_name}")')
+            schema = cur.fetchall()
+            
+            # 2. Create a new table without the dropped column
+            new_table_name = self.table_name + '_new'
+            columns = []
+            new_columns_def = []
+            for row in schema:
+                if row[1] != col_name:
+                    columns.append(row[1])
+                    new_columns_def.append(f'"{row[1]}" {row[2]}')
+            
+            create_sql = f'CREATE TABLE "{new_table_name}" ({", ".join(new_columns_def)})'
+            cur.execute(create_sql)
+
+            # 3. Copy data to the new table
+            col_names_str = ', '.join([f'"{col}"' for col in columns])
+            cur.execute(f'INSERT INTO "{new_table_name}" ({col_names_str}) SELECT {col_names_str} FROM "{self.table_name}"')
+
+            # 4. Drop the old table
+            cur.execute(f'DROP TABLE "{self.table_name}"')
+
+            # 5. Rename the new table
+            cur.execute(f'ALTER TABLE "{new_table_name}" RENAME TO "{self.table_name}"')
+
+            db.commit()
+            db.close()
+            self.model.select()
+            self._mark_modified()
+        except Exception as e:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось удалить столбе- {e}')
 
     def closeEvent(self, event):
         self.save_geometry()
@@ -189,4 +245,4 @@ class TableEditDialog(QDialog):
     def restore_geometry(self):
         geom = self._settings.value('geometry')
         if geom:
-            self.restoreGeometry(geom) 
+            self.restoreGeometry(geom)

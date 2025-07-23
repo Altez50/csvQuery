@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QFileDialog, QHBoxLayout, QComboBox, QLineEdit, QSizePolicy, QDialog, QFontComboBox, QSpinBox, QDialogButtonBox, QInputDialog, QComboBox, QMenu, QTreeWidget, QTreeWidgetItem
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QFileDialog, QHBoxLayout, QComboBox, QLineEdit, QSizePolicy, QDialog, QFontComboBox, QSpinBox, QDialogButtonBox, QInputDialog, QComboBox, QMenu, QTreeWidget, QTreeWidgetItem, QAction
 from PyQt5.QtCore import Qt, QFileSystemWatcher, QProcess, QEvent
 import sqlite3
 import pandas as pd
@@ -9,7 +9,7 @@ import json
 import os
 from PyQt5.Qsci import QsciScintilla, QsciLexerSQL
 import re
-from query_ftree_dialog import QueryTreeDialog
+from query_tree_dialog import QueryTreeDialog
 from results_dialog import ResultsDialog
 import tempfile
 from PyQt5.QtWidgets import QMessageBox
@@ -123,123 +123,6 @@ class QueryPreviewDialog(QDialog):
         btn = QPushButton('Закрыть')
         btn.clicked.connect(self.accept)
         layout.addWidget(btn)
-
-# class QueryTreeDialog(QDialog):
-#     def __init__(self, sql_query_page):
-#         super().__init__(sql_query_page)
-#         self.setWindowTitle('История запросов')
-#         self.setMinimumWidth(500)
-#         self.sql_query_page = sql_query_page
-#         layout = QVBoxLayout(self)
-#         history_layout = QHBoxLayout()
-#         history_layout.addWidget(QLabel("История:"))
-#         self.history_tree = QTreeWidget()
-#         self.history_tree.setHeaderLabels(["Группа", "Запрос"])
-#         self.history_tree.setColumnCount(2)
-#         self.history_tree.setSelectionMode(QTreeWidget.SingleSelection)
-#         self.history_tree.setDragDropMode(QTreeWidget.InternalMove)
-#         self.history_tree.setDefaultDropAction(Qt.MoveAction)
-#         self.history_tree.setDragEnabled(True)
-#         self.history_tree.setAcceptDrops(True)
-#         self.history_tree.setDropIndicatorShown(True)
-#         self.history_tree.itemSelectionChanged.connect(self.sql_query_page.on_history_selected)
-#         self.history_tree.itemChanged.connect(self.sql_query_page.on_history_item_changed)
-#         history_layout.addWidget(self.history_tree, 1)
-#         btns_vbox = QVBoxLayout()
-#         self.save_btn = QPushButton("Сохранить")
-#         self.save_btn.setFixedWidth(90)
-#         self.save_btn.clicked.connect(self.sql_query_page.save_current_history)
-#         btns_vbox.addWidget(self.save_btn)
-#         self.delete_btn = QPushButton("Удалить")
-#         self.delete_btn.setFixedWidth(90)
-#         self.delete_btn.clicked.connect(self.sql_query_page.delete_current_history)
-#         btns_vbox.addWidget(self.delete_btn)
-#         btns_vbox.addStretch()
-#         history_layout.addLayout(btns_vbox)
-#         layout.addLayout(history_layout)
-#         self.setLayout(layout)
-#         self.update_history_tree()
-#     def update_history_tree(self):
-#         self.history_tree.blockSignals(True)
-#         self.history_tree.clear()
-#         for group_idx, group in enumerate(self.sql_query_page.history):
-#             group_item = QTreeWidgetItem([group['name'], ''])
-#             group_item.setFlags(group_item.flags() | Qt.ItemIsEditable | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)
-#             for q_idx, query in enumerate(group['queries']):
-#                 label = query.get('query', '').strip().replace('\n', ' ')[:40]
-#                 if query.get('task_numbers'):
-#                     label += f" [{query['task_numbers']}]"
-#                 query_item = QTreeWidgetItem(['', label])
-#                 query_item.setFlags(query_item.flags() | Qt.ItemIsEditable | Qt.ItemIsDragEnabled)
-#                 group_item.addChild(query_item)
-#             self.history_tree.addTopLevelItem(group_item)
-#         self.history_tree.expandAll()
-#         self.history_tree.blockSignals(False)
-
-class ResultsDialog(QDialog):
-    def __init__(self, sql_query_page):
-        super().__init__(sql_query_page)
-        self.setWindowTitle('Результаты запроса')
-        self.setMinimumWidth(700)
-        self.sql_query_page = sql_query_page
-        layout = QVBoxLayout(self)
-        self.results_selector = QComboBox()
-        self.results_selector.currentIndexChanged.connect(self.sql_query_page.on_result_selection)
-        layout.addWidget(self.results_selector)
-        self.results_table = QTableWidget()
-        layout.addWidget(self.results_table)
-        self.records_label = QLabel("")
-        layout.addWidget(self.records_label)
-        export_layout = QHBoxLayout()
-        self.export_excel_btn = QPushButton("Экспорт в Excel")
-        self.export_excel_btn.setFixedWidth(120)
-        self.export_excel_btn.clicked.connect(self.sql_query_page.export_to_excel)
-        self.export_csv_btn = QPushButton("Экспорт в CSV")
-        self.export_csv_btn.setFixedWidth(120)
-        self.export_csv_btn.clicked.connect(self.sql_query_page.export_to_csv)
-        self.copy_btn = QPushButton("Копировать")
-        self.copy_btn.setFixedWidth(100)
-        self.copy_btn.clicked.connect(self.sql_query_page.copy_to_clipboard)
-        self.to_table_btn = QPushButton("Поместить в таблицу")
-        self.to_table_btn.setFixedWidth(180)
-        self.to_table_btn.clicked.connect(self.sql_query_page.place_results_to_table)
-        export_layout.addWidget(self.export_excel_btn)
-        export_layout.addWidget(self.export_csv_btn)
-        export_layout.addWidget(self.copy_btn)
-        export_layout.addWidget(self.to_table_btn)
-        export_layout.addStretch()
-        layout.addLayout(export_layout)
-        self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #005500; padding: 2px;")
-        layout.addWidget(self.status_label)
-        self.setLayout(layout)
-        self.update_results_view()
-    def update_results_view(self):
-        # Синхронизировать данные с SQLQueryPage
-        self.results_selector.blockSignals(True)
-        self.results_selector.clear()
-        if hasattr(self.sql_query_page, '_all_results') and self.sql_query_page._all_results:
-            self.results_selector.addItems([f"Результат {i+1}" for i in range(len(self.sql_query_page._all_results))])
-            self.results_selector.setCurrentIndex(self.sql_query_page._current_result_idx)
-        self.results_selector.blockSignals(False)
-        # Обновить таблицу и лейблы
-        if hasattr(self.sql_query_page, 'results_table'):
-            # Копируем содержимое results_table
-            self.results_table.setRowCount(self.sql_query_page.results_table.rowCount())
-            self.results_table.setColumnCount(self.sql_query_page.results_table.columnCount())
-            self.results_table.setHorizontalHeaderLabels([
-                self.sql_query_page.results_table.horizontalHeaderItem(i).text() if self.sql_query_page.results_table.horizontalHeaderItem(i) else ''
-                for i in range(self.sql_query_page.results_table.columnCount())
-            ])
-            for i in range(self.sql_query_page.results_table.rowCount()):
-                for j in range(self.sql_query_page.results_table.columnCount()):
-                    item = self.sql_query_page.results_table.item(i, j)
-                    self.results_table.setItem(i, j, QTableWidgetItem(item.text() if item else ''))
-        if hasattr(self.sql_query_page, 'records_label'):
-            self.records_label.setText(self.sql_query_page.records_label.text())
-        if hasattr(self.sql_query_page, 'status_label'):
-            self.status_label.setText(self.sql_query_page.status_label.text())
-            self.status_label.setStyleSheet(self.sql_query_page.status_label.styleSheet())
 
 class SQLQueryPage(QWidget):
     def __init__(self, parent=None):
@@ -608,7 +491,8 @@ class SQLQueryPage(QWidget):
         self.save_query_to_history()
         # Показываем окно результатов всегда при попытке выполнить запрос
         if self.results_dialog is None:
-            self.results_dialog = ResultsDialog(self)
+            self.results_dialog = ResultsDialog()
+        self.results_dialog.sql_query_page = self
         self.results_dialog.update_results_view()
         self.results_dialog.show()
         self.results_dialog.raise_()
@@ -843,20 +727,28 @@ class SQLQueryPage(QWidget):
     def insert_field_name(self):
         if not self.conn:
             self.set_status("Нет подключения к базе данных.", color="#aa0000")
+            # return
+        
+        cur = self.conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [row[0] for row in cur.fetchall()]
+        
+        if not tables:
+            self.set_status("В базе данных нет таблиц.", color="#aa0000")
             return
-        try:
-            cur = self.conn.cursor()
-            cur.execute("PRAGMA table_info(data)")
-            columns = [row[1] for row in cur.fetchall()]
-        except Exception:
-            columns = []
-        if not columns:
-            self.set_status("Нет данных о колонках таблицы data.", color="#aa0000")
-            return
+
         menu = QMenu(self)
-        for col in columns:
-            action = menu.addAction(col)
-            action.triggered.connect(lambda checked, c=col: self._insert_text_at_cursor(c))
+        for table_name in tables:
+            table_menu = menu.addMenu(table_name)
+            try:
+                cur.execute(f'PRAGMA table_info("{table_name}")')
+                columns = [row[1] for row in cur.fetchall()]
+                for col in columns:
+                    action = table_menu.addAction(col)
+                    action.triggered.connect(lambda checked, t=table_name, c=col: self._insert_text_at_cursor(f'"{t}"."{c}"'))
+            except Exception as e:
+                print(f'Error fetching columns for table {table_name}: {e}')
+
         menu.exec_(self.insert_field_btn.mapToGlobal(self.insert_field_btn.rect().bottomLeft()))
 
     def _insert_text_at_cursor(self, text):
@@ -947,7 +839,8 @@ class SQLQueryPage(QWidget):
 
     def open_results_dialog(self):
         if self.results_dialog is None:
-            self.results_dialog = ResultsDialog(self)
+            self.results_dialog = ResultsDialog()
+        self.results_dialog.sql_query_page = self
         self.results_dialog.update_results_view()
         self.results_dialog.show()
         self.results_dialog.raise_()
@@ -1127,4 +1020,4 @@ class ColumnsOrderDialog(QDialog):
         delim = self.delim_combo.currentText()
         if delim == 'Свой символ...':
             delim = self.custom_delim_edit.text() or ','
-        return order, delim 
+        return order, delim

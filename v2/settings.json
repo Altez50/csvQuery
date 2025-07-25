@@ -1,0 +1,24 @@
+{
+  "confirm_on_exit": true,
+  "convert_first_row_to_headers": false,
+  "table_double_click_mode": "CSV editor",
+  "panel_states": {
+    "left_dock_visible": true,
+    "right_dock_visible": false,
+    "bottom_dock_visible": false,
+    "left_dock_floating": false,
+    "right_dock_floating": false,
+    "bottom_dock_floating": false,
+    "left_dock_tab_index": 3,
+    "right_dock_tab_index": 0,
+    "bottom_dock_tab_index": 0,
+    "editor_tab_index": 1,
+    "window_geometry": {
+      "x": 98,
+      "y": 38,
+      "width": 1400,
+      "height": 900
+    },
+    "window_maximized": false
+  }
+}

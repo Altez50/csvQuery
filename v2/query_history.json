@@ -1,0 +1,25 @@
+[
+  {
+    "name": "Auto-saved",
+    "queries": [
+      {
+        "name": "Auto-saved Query 05:00:07",
+        "params": {
+          "task_numbers": ""
+        },
+        "query": "SELECT * FROM [table_281строк] LIMIT 10010;",
+        "task_numbers": "",
+        "timestamp": "2025-07-25T05:00:51.670462"
+      },
+      {
+        "name": "Auto-saved Query 05:00:15",
+        "params": {
+          "task_numbers": ""
+        },
+        "query": "SELECT * FROM [table_281строк] LIMIT 100;\t--",
+        "task_numbers": "",
+        "timestamp": "2025-07-25T05:00:15.545029"
+      }
+    ]
+  }
+]

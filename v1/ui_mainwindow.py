@@ -756,7 +756,14 @@ class MainWindow(QMainWindow):
         if not sel:
             return
         rng = sel[0]
-        # Если ширина >= высоты — удалять строки, иначе столбцы
+
+        # 1st condition: if selected area height is entire column height, delete columns and return
+        if rng.bottomRow() - rng.topRow() + 1 == self.csv_table.rowCount():
+            for col in reversed(range(rng.leftColumn(), rng.rightColumn() + 1)):
+                self.csv_table.removeColumn(col)
+            return
+
+        # Original condition: if width >= height, delete rows, else delete columns
         if rng.columnCount() >= rng.rowCount():
             for row in reversed(range(rng.topRow(), rng.bottomRow() + 1)):
                 self.csv_table.removeRow(row)

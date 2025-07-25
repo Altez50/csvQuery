@@ -1,0 +1,28 @@
+[
+  {
+    "name": "Data Analysis",
+    "snippets": [
+      {
+        "name": "Basic Statistics",
+        "code": "import pandas as pd\nimport numpy as np\n\n# Get CSV data\nif csv_editor.csv_data and csv_editor.csv_headers:\n    df = pd.DataFrame(csv_editor.csv_data, columns=csv_editor.csv_headers)\n    \n    # Basic statistics\n    print(\"Dataset shape:\", df.shape)\n    print(\"\nData types:\")\n    print(df.dtypes)\n    print(\"\nBasic statistics:\")\n    print(df.describe())\n    \n    # Missing values\n    print(\"\nMissing values:\")\n    print(df.isnull().sum())\nelse:\n    print(\"No CSV data loaded\")"
+      },
+      {
+        "name": "Data Filtering",
+        "code": "import pandas as pd\n\n# Get CSV data\nif csv_editor.csv_data and csv_editor.csv_headers:\n    df = pd.DataFrame(csv_editor.csv_data, columns=csv_editor.csv_headers)\n    \n    # Example: Filter data (modify condition as needed)\n    # filtered_df = df[df['column_name'] > 100]\n    \n    print(f\"Original data: {len(df)} rows\")\n    # print(f\"Filtered data: {len(filtered_df)} rows\")\n    \n    # Update CSV editor with filtered data\n    # csv_editor.csv_data = filtered_df.values.tolist()\n    # csv_editor.update_table_display()\nelse:\n    print(\"No CSV data loaded\")"
+      }
+    ]
+  },
+  {
+    "name": "Database Operations",
+    "snippets": [
+      {
+        "name": "List Tables",
+        "code": "# List all tables in database\nif main_window.sqlite_conn:\n    cursor = main_window.sqlite_conn.cursor()\n    cursor.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")\n    tables = cursor.fetchall()\n    \n    print(\"Tables in database:\")\n    for table in tables:\n        print(f\"  - {table[0]}\")\nelse:\n    print(\"No database connection\")"
+      },
+      {
+        "name": "Table Info",
+        "code": "# Get table information\ntable_name = \"your_table_name\"  # Change this\n\nif main_window.sqlite_conn:\n    cursor = main_window.sqlite_conn.cursor()\n    \n    try:\n        # Get column info\n        cursor.execute(f\"PRAGMA table_info({table_name})\")\n        columns = cursor.fetchall()\n        \n        print(f\"Table: {table_name}\")\n        print(\"Columns:\")\n        for col in columns:\n            print(f\"  {col[1]} ({col[2]})\")\n            \n        # Get row count\n        cursor.execute(f\"SELECT COUNT(*) FROM {table_name}\")\n        count = cursor.fetchone()[0]\n        print(f\"\nRow count: {count}\")\n        \n    except Exception as e:\n        print(f\"Error: {e}\")\nelse:\n    print(\"No database connection\")"
+      }
+    ]
+  }
+]

@@ -1,0 +1,6 @@
+ID,Product,Category,Price,Stock,Description,Available,Rating
+1,Laptop,Electronics,999.99,15,High-performance laptop with 16GB RAM,Yes,4.5
+2,Mouse,Accessories,25.5,100,Wireless optical mouse with ergonomic design,Yes,4.2
+3,Keyboard,Accessories,75.0,45,Mechanical keyboard with RGB backlighting,No,4.8
+4,Monitor,Electronics,299.99,8,27-inch 4K monitor with HDR support,Yes,4.6
+5,Headphones,Audio,149.99,23,Noise-cancelling wireless headphones,Yes,4.3

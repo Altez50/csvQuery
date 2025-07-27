@@ -561,7 +561,12 @@ class TableManager(QWidget):
             if hasattr(self.main_window, 'csv_editor'):
                 self.main_window.csv_editor.csv_headers = headers
                 self.main_window.csv_editor.csv_data = data
+                self.main_window.csv_editor.current_file = None  # Clear file path since loading from database
+                self.main_window.csv_editor.current_table_name = table_name  # Set current table name
+                self.main_window.csv_editor.cell_formatting = {}  # Clear any existing formatting
+                self.main_window.csv_editor.column_widths = {}  # Clear column widths
                 self.main_window.csv_editor.update_table_display()
+                self.main_window.csv_editor.update_main_window_title()  # Update title to show table name
                 
                 # Switch to CSV editor tab
                 self.main_window.editor_tabs.setCurrentWidget(self.main_window.csv_editor)
@@ -599,23 +604,32 @@ class TableManager(QWidget):
             
     def edit_table(self):
         """Edit selected table"""
-        current_item = self.table_list.currentItem()
+        current_item = self.table_tree.currentItem()
         if not current_item:
             QMessageBox.information(self, "Info", "Please select a table to edit")
             return
             
-        table_name = current_item.text()
+        item_data = current_item.data(0, Qt.UserRole)
+        if not item_data or item_data.get('type') != 'table':
+            QMessageBox.information(self, "Info", "Please select a table to edit")
+            return
+            
         # For now, just show table structure
         self.show_table_structure()
         
     def rename_table(self):
         """Rename selected table"""
-        current_item = self.table_list.currentItem()
+        current_item = self.table_tree.currentItem()
         if not current_item:
             QMessageBox.information(self, "Info", "Please select a table to rename")
             return
             
-        old_name = current_item.text()
+        item_data = current_item.data(0, Qt.UserRole)
+        if not item_data or item_data.get('type') != 'table':
+            QMessageBox.information(self, "Info", "Please select a table to rename")
+            return
+            
+        old_name = item_data.get('table_name')
         new_name, ok = QInputDialog.getText(
             self, "Rename Table", f"Enter new name for table '{old_name}':", text=old_name
         )
@@ -639,7 +653,7 @@ class TableManager(QWidget):
                 
     def delete_table(self):
         """Delete selected table"""
-        current_item = self.table_list.currentItem()
+        current_item = self.table_tree.currentItem()
         if not current_item:
             QMessageBox.information(self, "Info", "Please select a table to delete")
             return
@@ -672,12 +686,17 @@ class TableManager(QWidget):
                 
     def view_table_data(self):
         """View data in selected table"""
-        current_item = self.table_list.currentItem()
+        current_item = self.table_tree.currentItem()
         if not current_item:
             QMessageBox.information(self, "Info", "Please select a table to view")
             return
             
-        table_name = current_item.text()
+        item_data = current_item.data(0, Qt.UserRole)
+        if not item_data or item_data.get('type') != 'table':
+            QMessageBox.information(self, "Info", "Please select a table to view")
+            return
+            
+        table_name = item_data.get('table_name')
         
         # Switch to SQL editor and set a SELECT query
         if hasattr(self.main_window, 'sql_editor'):
@@ -687,12 +706,17 @@ class TableManager(QWidget):
             
     def show_table_structure(self):
         """Show structure of selected table"""
-        current_item = self.table_list.currentItem()
+        current_item = self.table_tree.currentItem()
         if not current_item:
             QMessageBox.information(self, "Info", "Please select a table")
             return
             
-        table_name = current_item.text()
+        item_data = current_item.data(0, Qt.UserRole)
+        if not item_data or item_data.get('type') != 'table':
+            QMessageBox.information(self, "Info", "Please select a table")
+            return
+            
+        table_name = item_data.get('table_name')
         
         if not hasattr(self.main_window, 'sqlite_conn') or not self.main_window.sqlite_conn:
             QMessageBox.warning(self, "Error", "No database connection")
@@ -727,16 +751,40 @@ class TableManager(QWidget):
             
     def get_selected_table(self):
         """Get currently selected table name"""
-        current_item = self.table_list.currentItem()
-        return current_item.text() if current_item else None
+        current_item = self.table_tree.currentItem()
+        if current_item:
+            item_data = current_item.data(0, Qt.UserRole)
+            if item_data and item_data.get('type') == 'table':
+                return item_data.get('table_name')
+        return None
         
     def select_table(self, table_name):
         """Select a table by name"""
-        for i in range(self.table_list.count()):
-            item = self.table_list.item(i)
-            if item.text() == table_name:
-                self.table_list.setCurrentItem(item)
-                break
+        def find_table_item(parent_item):
+            for i in range(parent_item.childCount()):
+                child = parent_item.child(i)
+                item_data = child.data(0, Qt.UserRole)
+                if item_data and item_data.get('type') == 'table' and item_data.get('table_name') == table_name:
+                    return child
+                # Recursively search in child groups
+                found = find_table_item(child)
+                if found:
+                    return found
+            return None
+        
+        # Search in root items
+        root = self.table_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            item = root.child(i)
+            item_data = item.data(0, Qt.UserRole)
+            if item_data and item_data.get('type') == 'table' and item_data.get('table_name') == table_name:
+                self.table_tree.setCurrentItem(item)
+                return
+            # Search in child items
+            found = find_table_item(item)
+            if found:
+                self.table_tree.setCurrentItem(found)
+                return
                 
     def save_table_to_xlsx(self):
         """Save selected table to XLSX file"""

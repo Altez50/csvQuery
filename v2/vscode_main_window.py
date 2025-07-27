@@ -24,11 +24,13 @@ from sql_query_editor import SQLQueryEditor
 from python_code_editor import PythonCodeEditor
 from ai_assistant import AIAssistant
 from table_manager import TableManager
+from utils.plugin_loader import PluginLoader
+from plugin_compare_dialog import PluginCompareDialog
 
 SETTINGS_FILE = '../settings.json'
 
 class VSCodeMainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, file_to_open=None):
         super().__init__()
         self.setWindowTitle("CSV Query Tool - VSCode Style")
         self.setGeometry(100, 100, 1400, 900)
@@ -40,6 +42,7 @@ class VSCodeMainWindow(QMainWindow):
         self.confirm_on_exit = True
         self.convert_first_row_to_headers = False
         self.last_selected_file = None
+        self.file_to_open = file_to_open
         
         # Enable drag and drop
         self.setAcceptDrops(True)
@@ -64,6 +67,10 @@ class VSCodeMainWindow(QMainWindow):
         
         # Load query history
         self.load_query_history_tree()
+        
+        # Open file from command line if provided
+        if self.file_to_open:
+            self.open_file_from_command_line(self.file_to_open)
         
     def init_central_widget(self):
         """Initialize the central editor area with tabs"""
@@ -95,21 +102,91 @@ class VSCodeMainWindow(QMainWindow):
         self.left_dock = QDockWidget("Explorer", self)
         self.left_dock_tabs = QTabWidget()
         
-        # File Explorer
+        # File Explorer with filtering
+        files_widget = QWidget()
+        files_layout = QVBoxLayout(files_widget)
+        files_layout.setContentsMargins(5, 5, 5, 5)
+        files_layout.setSpacing(5)
+        
+        # Address bar
+        address_layout = QHBoxLayout()
+        address_label = QLabel("📁")
+        address_label.setStyleSheet("font-size: 14px;")
+        address_layout.addWidget(address_label)
+        
+        self.address_bar = QLineEdit()
+        self.address_bar.setPlaceholderText("Enter directory path...")
+        self.address_bar.returnPressed.connect(self.navigate_to_path)
+        self.address_bar.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 3px;")
+        address_layout.addWidget(self.address_bar)
+        
+        # Navigation buttons
+        self.up_btn = QPushButton("⬆️")
+        self.up_btn.setMaximumSize(30, 25)
+        self.up_btn.setToolTip("Go Up")
+        self.up_btn.clicked.connect(self.navigate_up)
+        address_layout.addWidget(self.up_btn)
+        
+        self.home_btn = QPushButton("🏠")
+        self.home_btn.setMaximumSize(30, 25)
+        self.home_btn.setToolTip("Go Home")
+        self.home_btn.clicked.connect(self.navigate_home)
+        address_layout.addWidget(self.home_btn)
+        
+        files_layout.addLayout(address_layout)
+        
+        # File type filter
+        filter_layout = QHBoxLayout()
+        filter_label = QLabel("Filter:")
+        filter_label.setStyleSheet("font-weight: bold; font-size: 11px;")
+        filter_layout.addWidget(filter_label)
+        
+        self.file_filter_combo = QComboBox()
+        self.file_filter_combo.addItems(["All Files", "CSV Files (*.csv)", "Excel Files (*.xlsx, *.xls)"])
+        self.file_filter_combo.setCurrentText("Excel Files (*.xlsx, *.xls)")  # Default to xlsx
+        self.file_filter_combo.currentTextChanged.connect(self.apply_file_filter)
+        filter_layout.addWidget(self.file_filter_combo)
+        
+        files_layout.addLayout(filter_layout)
+        
+        # File tree
         self.file_tree = QTreeView()
         self.file_model = QFileSystemModel()
-        # Set root to system root instead of current directory
-        self.file_model.setRootPath(QDir.rootPath())
+        # Set root to current working directory
+        current_dir = os.getcwd()
+        self.file_model.setRootPath(current_dir)
+        # Enable directory sorting on top
+        self.file_model.sort(0, Qt.AscendingOrder)
         self.file_tree.setModel(self.file_model)
-        # Don't set root index to allow browsing entire file system
+        # Set root index to current directory
+        self.file_tree.setRootIndex(self.file_model.index(current_dir))
         self.file_tree.hideColumn(1)  # Hide size
         self.file_tree.hideColumn(2)  # Hide type
         self.file_tree.hideColumn(3)  # Hide date
         
+        # Set initial address bar path
+        self.address_bar.setText(current_dir)
+        
+        # Connect selection change to update address bar
+        self.file_tree.clicked.connect(self.update_address_bar)
+        
+        # Apply default filter
+        self.apply_file_filter()
+        
         # Connect double-click to load CSV/Excel files
         self.file_tree.doubleClicked.connect(self.on_file_double_clicked)
         
-        self.left_dock_tabs.addTab(self.file_tree, "📁 Files")
+        # Add context menu for file comparison
+        self.file_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_tree.customContextMenuRequested.connect(self.show_file_context_menu)
+        
+        # Initialize plugin system
+        self.plugin_loader = PluginLoader()
+        self.selected_files_for_comparison = []
+        
+        files_layout.addWidget(self.file_tree)
+        
+        self.left_dock_tabs.addTab(files_widget, "📁 Files")
         
         # Table Manager
         self.table_manager = TableManager(self)
@@ -396,11 +473,13 @@ class VSCodeMainWindow(QMainWindow):
 
         # Tools menu
         tools_menu = menubar.addMenu('Tools')
-        
-
-        
         options_action = tools_menu.addAction('Options...')
-        options_action.triggered.connect(self.open_options_dialog)
+        options_action.triggered.connect(self.open_options_dialog)        
+        # Options menu
+        #options_menu = menubar.addMenu('Options')
+        options_action = menubar.addAction('Options...')
+        options_action.triggered.connect(self.open_options_dialog)       
+
         
         # Help menu
         help_menu = menubar.addMenu('Help')
@@ -433,10 +512,15 @@ class VSCodeMainWindow(QMainWindow):
                     self.table_manager.double_click_mode = table_mode
                     self.table_manager.mode_switcher.setCurrentText(table_mode)
                     
-                # Load and open last selected file
+                # Load and handle last selected file
                 last_file = self.settings.get('last_selected_file')
                 if last_file and os.path.exists(last_file):
-                    self.open_last_file(last_file)
+                    # Check if we should open the file or just highlight it
+                    open_last_file = self.settings.get('open_last_file_on_startup', True)
+                    if open_last_file:
+                        self.open_last_file(last_file)
+                    else:
+                        self.highlight_file_in_explorer(last_file)
                     
                 # Load panel states
                 self.load_panel_states()
@@ -487,6 +571,9 @@ class VSCodeMainWindow(QMainWindow):
                 # Switch to CSV editor tab
                 self.editor_tabs.setCurrentWidget(self.csv_editor)
                 
+                # Highlight the opened file in the explorer tree
+                self.highlight_file_in_explorer(file_path)
+                
                 # Log action
                 self.log_message(f"Restored last file: {os.path.basename(file_path)}")
                 
@@ -495,6 +582,35 @@ class VSCodeMainWindow(QMainWindow):
                 
         except Exception as e:
             self.log_message(f"Failed to restore last file {file_path}: {e}")
+            
+    def highlight_file_in_explorer(self, file_path):
+        """Highlight the specified file in the file explorer tree"""
+        try:
+            # Get the model index for the file
+            file_index = self.file_model.index(file_path)
+            
+            if file_index.isValid():
+                # Expand parent directories to make the file visible
+                parent_index = file_index.parent()
+                while parent_index.isValid():
+                    self.file_tree.expand(parent_index)
+                    parent_index = parent_index.parent()
+                
+                # Select and scroll to the file
+                self.file_tree.setCurrentIndex(file_index)
+                self.file_tree.scrollTo(file_index)
+                
+                # Switch to the Files tab in the left dock
+                self.left_dock_tabs.setCurrentIndex(0)  # Files tab is at index 0
+                
+                # Log action
+                self.log_message(f"Highlighted file in explorer: {os.path.basename(file_path)}")
+                
+                # Set as current last selected file
+                self.last_selected_file = file_path
+                
+        except Exception as e:
+            self.log_message(f"Failed to highlight file {file_path}: {e}")
             
     def save_panel_states(self):
         """Save the current state of dock panels"""
@@ -1168,6 +1284,9 @@ class VSCodeMainWindow(QMainWindow):
                 # Switch to CSV editor tab
                 self.editor_tabs.setCurrentWidget(self.csv_editor)
                 
+                # Highlight the opened file in the explorer tree
+                self.highlight_file_in_explorer(file_path)
+                
                 # Log action
                 self.log_message(f"Loaded file: {os.path.basename(file_path)}")
                 
@@ -1185,34 +1304,53 @@ class VSCodeMainWindow(QMainWindow):
             sheet_names = excel_file.sheet_names
             
             if len(sheet_names) == 1:
-                # Single sheet - ask user if they want formatting
-                from PyQt5.QtWidgets import QMessageBox
-                reply = QMessageBox.question(
-                    self, 'Excel Import Options',
-                    'Do you want to import with cell formatting and font options?\n\n'
-                    'Yes: Import with formatting (slower but preserves appearance)\n'
-                    'No: Import data only (faster)',
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes
-                )
+                # Single sheet - check settings for import behavior
+                import_with_formatting = self.settings.get('excel_import_with_formatting', False)
+                prompt_for_options = self.settings.get('excel_prompt_for_options', True)
                 
-                if reply == QMessageBox.Yes:
-                    # Load with formatting options
+                if import_with_formatting and not prompt_for_options:
+                    # Import with formatting using default settings
                     try:
                         from excel_format_dialog import ExcelFormatDialog
                         dialog = ExcelFormatDialog(self)
-                        if dialog.exec_() == QDialog.Accepted:
-                            options = dialog.get_options()
-                            self.csv_editor.load_excel_file_with_formatting(file_path, options)
-                        else:
-                            # User cancelled, load without formatting
-                            self.csv_editor.load_excel_file_simple(file_path)
+                        options = dialog.get_default_options()  # Get default options without showing dialog
+                        self.csv_editor.load_excel_file_with_formatting(file_path, options)
                     except ImportError:
                         QMessageBox.warning(self, "Warning", 
                             "openpyxl not available. Loading without formatting.")
                         self.csv_editor.load_excel_file_simple(file_path)
+                elif prompt_for_options:
+                    # Show dialog to ask user
+                    from PyQt5.QtWidgets import QMessageBox
+                    reply = QMessageBox.question(
+                        self, 'Excel Import Options',
+                        'Do you want to import with cell formatting and font options?\n\n'
+                        'Yes: Import with formatting (slower but preserves appearance)\n'
+                        'No: Import data only (faster)',
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes if import_with_formatting else QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.Yes:
+                        # Load with formatting options
+                        try:
+                            from excel_format_dialog import ExcelFormatDialog
+                            dialog = ExcelFormatDialog(self)
+                            if dialog.exec_() == QDialog.Accepted:
+                                options = dialog.get_options()
+                                self.csv_editor.load_excel_file_with_formatting(file_path, options)
+                            else:
+                                # User cancelled, load without formatting
+                                self.csv_editor.load_excel_file_simple(file_path)
+                        except ImportError:
+                            QMessageBox.warning(self, "Warning", 
+                                "openpyxl not available. Loading without formatting.")
+                            self.csv_editor.load_excel_file_simple(file_path)
+                    else:
+                        # Load without formatting
+                        self.csv_editor.load_excel_file_simple(file_path)
                 else:
-                    # Load without formatting
+                    # Import without formatting (default when prompt is disabled and import_with_formatting is false)
                     self.csv_editor.load_excel_file_simple(file_path)
                 
                 # Update window state
@@ -1250,6 +1388,41 @@ class VSCodeMainWindow(QMainWindow):
                 "Please install it using: pip install pandas openpyxl")
         except Exception as e:
             raise Exception(f"Failed to load Excel file: {e}")
+    
+    def open_file_from_command_line(self, file_path):
+        """Open file specified from command line"""
+        try:
+            # Get file extension
+            _, ext = os.path.splitext(file_path)
+            ext = ext.lower()
+            
+            # Save as last selected file
+            self.last_selected_file = file_path
+            
+            # Handle CSV/Excel files
+            if ext in ['.csv', '.xlsx', '.xls']:
+                if ext == '.csv':
+                    # Load CSV file
+                    self.csv_editor.load_csv_file(file_path)
+                elif ext in ['.xlsx', '.xls']:
+                    # Load Excel file
+                    self.load_excel_file(file_path)
+                    
+                # Switch to CSV editor tab
+                self.editor_tabs.setCurrentWidget(self.csv_editor)
+                
+                # Highlight the opened file in the explorer tree
+                self.highlight_file_in_explorer(file_path)
+                
+                # Log action
+                self.log_message(f"Loaded file from command line: {os.path.basename(file_path)}")
+                
+                # Save settings to persist last selected file
+                self.save_settings()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load file from command line: {e}")
+            self.log_message(f"Failed to load file {file_path}: {e}")
         
     def closeEvent(self, event):
         """Handle application close event"""
@@ -1293,6 +1466,196 @@ class VSCodeMainWindow(QMainWindow):
         else:
             event.ignore()
     
+    def show_file_context_menu(self, position):
+        """Show context menu for file tree with plugin comparison options"""
+        index = self.file_tree.indexAt(position)
+        if not index.isValid():
+            return
+        
+        file_path = self.file_model.filePath(index)
+        if not os.path.isfile(file_path):
+            return
+        
+        # Check if it's a CSV or Excel file
+        _, ext = os.path.splitext(file_path)
+        if ext.lower() not in ['.csv', '.xlsx', '.xls']:
+            return
+        
+        menu = QMenu(self)
+        
+        # Add to comparison selection
+        if file_path not in self.selected_files_for_comparison:
+            add_action = menu.addAction("➕ Add to Comparison")
+            add_action.triggered.connect(lambda: self.add_file_to_comparison(file_path))
+        else:
+            remove_action = menu.addAction("➖ Remove from Comparison")
+            remove_action.triggered.connect(lambda: self.remove_file_from_comparison(file_path))
+        
+        # Show comparison options if we have plugins and files selected
+        if self.selected_files_for_comparison:
+            menu.addSeparator()
+            
+            # Load available plugins
+            plugins = self.plugin_loader.load_plugins()
+            
+            if plugins:
+                compare_menu = menu.addMenu("📊 Compare with Plugin")
+                
+                for plugin in plugins:
+                    try:
+                        # Plugin loader returns instances, not classes
+                        plugin_instance = plugin
+                        action = compare_menu.addAction(f"📊 {plugin_instance.get_name()}")
+                        action.triggered.connect(
+                            lambda checked, p=plugin_instance, f=file_path: 
+                            self.start_comparison(f, p)
+                        )
+                    except Exception as e:
+                        plugin_name = getattr(plugin, '__class__', {}).get('__name__', 'Unknown Plugin')
+                        self.log_message(f"Error loading plugin {plugin_name}: {e}")
+            else:
+                no_plugins_action = menu.addAction("No plugins available")
+                no_plugins_action.setEnabled(False)
+        
+        # Show selected files info
+        if self.selected_files_for_comparison:
+            menu.addSeparator()
+            selected_info = menu.addAction(f"Selected: {len(self.selected_files_for_comparison)} files")
+            selected_info.setEnabled(False)
+            
+            clear_action = menu.addAction("🗑️ Clear Selection")
+            clear_action.triggered.connect(self.clear_comparison_selection)
+        
+        menu.exec_(self.file_tree.mapToGlobal(position))
+    
+    def add_file_to_comparison(self, file_path):
+        """Add file to comparison selection"""
+        if file_path not in self.selected_files_for_comparison:
+            self.selected_files_for_comparison.append(file_path)
+            self.log_message(f"Added to comparison: {os.path.basename(file_path)}")
+    
+    def remove_file_from_comparison(self, file_path):
+        """Remove file from comparison selection"""
+        if file_path in self.selected_files_for_comparison:
+            self.selected_files_for_comparison.remove(file_path)
+            self.log_message(f"Removed from comparison: {os.path.basename(file_path)}")
+    
+    def clear_comparison_selection(self):
+        """Clear all selected files for comparison"""
+        self.selected_files_for_comparison.clear()
+        self.log_message("Cleared comparison selection")
+    
+    def start_comparison(self, current_file, plugin):
+        """Start comparison using selected plugin"""
+        if not self.selected_files_for_comparison:
+            QMessageBox.information(self, "Info", "Please select files to compare first.")
+            return
+            
+        # If current file is not in selection, add it
+        if current_file not in self.selected_files_for_comparison:
+            self.selected_files_for_comparison.append(current_file)
+        
+        if len(self.selected_files_for_comparison) < 2:
+            QMessageBox.information(self, "Info", "Please select at least 2 files to compare.")
+            return
+        
+        try:
+            import pandas as pd
+            
+            # Load the first two files for comparison
+            file1 = self.selected_files_for_comparison[0]
+            file2 = self.selected_files_for_comparison[1]
+            
+            # Load DataFrames
+            df1 = self.load_dataframe_from_file(file1)
+            df2 = self.load_dataframe_from_file(file2)
+            
+            # Create comparison dialog
+            dialog = PluginCompareDialog(
+                df1, df2, 
+                os.path.basename(file1), 
+                os.path.basename(file2), 
+                self
+            )
+            
+            dialog.exec_()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to start comparison: {e}")
+            self.log_message(f"Comparison failed: {e}")
+    
+    def load_dataframe_from_file(self, file_path):
+        """Load a pandas DataFrame from a file"""
+        import pandas as pd
+        
+        _, ext = os.path.splitext(file_path)
+        ext = ext.lower()
+        
+        if ext == '.csv':
+            return pd.read_csv(file_path)
+        elif ext in ['.xlsx', '.xls']:
+            return pd.read_excel(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {ext}")
+    
+    def apply_file_filter(self):
+        """Apply file filter based on the selected filter type"""
+        filter_type = self.file_filter_combo.currentText()
+        
+        if filter_type == "All Files":
+            # Show all files
+            self.file_model.setNameFilters([])
+        elif filter_type == "CSV Files":
+            # Show only CSV files
+            self.file_model.setNameFilters(["*.csv"])
+        elif filter_type == "Excel Files":
+            # Show only Excel files
+            self.file_model.setNameFilters(["*.xlsx", "*.xls"])
+        
+        # Apply the filter
+        self.file_model.setNameFilterDisables(False)
+    
+    def navigate_to_path(self):
+        """Navigate to the path entered in the address bar"""
+        path = self.address_bar.text().strip()
+        if os.path.exists(path) and os.path.isdir(path):
+            # Update the file model root
+            self.file_model.setRootPath(path)
+            self.file_tree.setRootIndex(self.file_model.index(path))
+            self.log_message(f"Navigated to: {path}")
+        else:
+            # Invalid path, revert to current path
+            current_path = self.file_model.rootPath()
+            self.address_bar.setText(current_path)
+            self.log_message(f"Invalid path: {path}")
+    
+    def navigate_up(self):
+        """Navigate to parent directory"""
+        current_path = self.file_model.rootPath()
+        parent_path = os.path.dirname(current_path)
+        if parent_path and parent_path != current_path:  # Ensure we can go up
+            self.file_model.setRootPath(parent_path)
+            self.file_tree.setRootIndex(self.file_model.index(parent_path))
+            self.address_bar.setText(parent_path)
+            self.log_message(f"Navigated up to: {parent_path}")
+    
+    def navigate_home(self):
+        """Navigate to home directory"""
+        home_path = os.path.expanduser("~")
+        self.file_model.setRootPath(home_path)
+        self.file_tree.setRootIndex(self.file_model.index(home_path))
+        self.address_bar.setText(home_path)
+        self.log_message(f"Navigated to home: {home_path}")
+    
+    def update_address_bar(self, index):
+        """Update address bar when user clicks on a directory in the tree"""
+        file_path = self.file_model.filePath(index)
+        if os.path.isdir(file_path):
+            # If it's a directory, navigate to it
+            self.file_model.setRootPath(file_path)
+            self.file_tree.setRootIndex(self.file_model.index(file_path))
+            self.address_bar.setText(file_path)
+    
     def dropEvent(self, event):
         """Handle drop event"""
         if event.mimeData().hasUrls():
@@ -1314,6 +1677,9 @@ class VSCodeMainWindow(QMainWindow):
                             
                             # Switch to CSV editor tab
                             self.editor_tabs.setCurrentWidget(self.csv_editor)
+                            
+                            # Highlight the opened file in the explorer tree
+                            self.highlight_file_in_explorer(file_path)
                             
                             # Log action
                             self.log_message(f"Loaded file via drag-and-drop: {os.path.basename(file_path)}")

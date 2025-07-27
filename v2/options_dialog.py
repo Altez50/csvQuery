@@ -123,6 +123,13 @@ class OptionsDialog(QDialog):
         self.content_stack.addWidget(python_page)
         python_editor_item.setData(0, Qt.UserRole, self.content_stack.count() - 1)
         
+        # Excel Import sub-item
+        excel_import_item = QTreeWidgetItem(["Excel Import"])
+        editor_item.addChild(excel_import_item)
+        excel_page = self.create_excel_import_page()
+        self.content_stack.addWidget(excel_page)
+        excel_import_item.setData(0, Qt.UserRole, self.content_stack.count() - 1)
+        
         # Advanced options
         advanced_item = QTreeWidgetItem(["Advanced"])
         self.options_tree.addTopLevelItem(advanced_item)
@@ -167,14 +174,26 @@ class OptionsDialog(QDialog):
         self.option_widgets['restore_last_session'] = restore_session_cb
         startup_layout.addWidget(restore_session_cb, 1, 0, 1, 2)
         
+        # Open last opened file
+        open_last_file_cb = QCheckBox("Open last opened file on startup")
+        self.option_widgets['open_last_opened_file'] = open_last_file_cb
+        startup_layout.addWidget(open_last_file_cb, 2, 0, 1, 2)
+        
+        # Last opened file display
+        startup_layout.addWidget(QLabel("Last opened file:"), 3, 0)
+        self.last_file_label = QLabel("None")
+        self.last_file_label.setWordWrap(True)
+        self.last_file_label.setStyleSheet("QLabel { color: #666; font-style: italic; }")
+        startup_layout.addWidget(self.last_file_label, 3, 1)
+        
         # Auto-save interval
-        startup_layout.addWidget(QLabel("Auto-save interval (minutes):"), 2, 0)
+        startup_layout.addWidget(QLabel("Auto-save interval (minutes):"), 4, 0)
         autosave_spin = QSpinBox()
         autosave_spin.setRange(0, 60)
         autosave_spin.setValue(5)
         autosave_spin.setSpecialValueText("Disabled")
         self.option_widgets['autosave_interval'] = autosave_spin
-        startup_layout.addWidget(autosave_spin, 2, 1)
+        startup_layout.addWidget(autosave_spin, 4, 1)
         
         layout.addWidget(startup_group)
         
@@ -544,6 +563,88 @@ class OptionsDialog(QDialog):
         page.setWidget(widget)
         return page
         
+    def create_excel_import_page(self):
+        """Create Excel import options page"""
+        page = QScrollArea()
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Excel Import Settings group
+        excel_group = QGroupBox("Excel Import Settings")
+        excel_layout = QGridLayout(excel_group)
+        
+        # Prompt for options
+        prompt_cb = QCheckBox("Prompt for options when opening Excel files")
+        prompt_cb.setChecked(True)
+        self.option_widgets['excel_prompt_for_options'] = prompt_cb
+        excel_layout.addWidget(prompt_cb, 0, 0, 1, 2)
+        
+        # Import with formatting by default
+        import_with_formatting_cb = QCheckBox("Import Excel data with formatting by default")
+        import_with_formatting_cb.setChecked(False)
+        self.option_widgets['excel_import_with_formatting'] = import_with_formatting_cb
+        excel_layout.addWidget(import_with_formatting_cb, 1, 0, 1, 2)
+        
+        layout.addWidget(excel_group)
+        
+        # Default Excel Import Options group
+        defaults_group = QGroupBox("Default Excel Import Options")
+        defaults_layout = QGridLayout(defaults_group)
+        
+        # Cell formatting options
+        defaults_layout.addWidget(QLabel("Cell Formatting:"), 0, 0, 1, 2)
+        
+        apply_bg_colors_cb = QCheckBox("Apply background colors")
+        apply_bg_colors_cb.setChecked(True)
+        self.option_widgets['excel_default_apply_background_colors'] = apply_bg_colors_cb
+        defaults_layout.addWidget(apply_bg_colors_cb, 1, 0)
+        
+        apply_text_colors_cb = QCheckBox("Apply text colors")
+        apply_text_colors_cb.setChecked(True)
+        self.option_widgets['excel_default_apply_text_colors'] = apply_text_colors_cb
+        defaults_layout.addWidget(apply_text_colors_cb, 1, 1)
+        
+        apply_borders_cb = QCheckBox("Apply cell borders")
+        apply_borders_cb.setChecked(False)
+        self.option_widgets['excel_default_apply_borders'] = apply_borders_cb
+        defaults_layout.addWidget(apply_borders_cb, 2, 0)
+        
+        # Font formatting options
+        defaults_layout.addWidget(QLabel("Font Formatting:"), 3, 0, 1, 2)
+        
+        apply_font_family_cb = QCheckBox("Apply font family")
+        apply_font_family_cb.setChecked(True)
+        self.option_widgets['excel_default_apply_font_family'] = apply_font_family_cb
+        defaults_layout.addWidget(apply_font_family_cb, 4, 0)
+        
+        apply_font_size_cb = QCheckBox("Apply font size")
+        apply_font_size_cb.setChecked(True)
+        self.option_widgets['excel_default_apply_font_size'] = apply_font_size_cb
+        defaults_layout.addWidget(apply_font_size_cb, 4, 1)
+        
+        apply_font_style_cb = QCheckBox("Apply font style (bold, italic)")
+        apply_font_style_cb.setChecked(True)
+        self.option_widgets['excel_default_apply_font_style'] = apply_font_style_cb
+        defaults_layout.addWidget(apply_font_style_cb, 5, 0)
+        
+        # Data options
+        defaults_layout.addWidget(QLabel("Data Options:"), 6, 0, 1, 2)
+        
+        preserve_formulas_cb = QCheckBox("Preserve formulas (show as text)")
+        preserve_formulas_cb.setChecked(False)
+        self.option_widgets['excel_default_preserve_formulas'] = preserve_formulas_cb
+        defaults_layout.addWidget(preserve_formulas_cb, 7, 0)
+        
+        convert_dates_cb = QCheckBox("Convert date formats to text")
+        convert_dates_cb.setChecked(True)
+        self.option_widgets['excel_default_convert_dates'] = convert_dates_cb
+        defaults_layout.addWidget(convert_dates_cb, 7, 1)
+        
+        layout.addWidget(defaults_group)
+        layout.addStretch()
+        page.setWidget(widget)
+        return page
+        
     def on_search_changed(self):
         """Handle search text change with debouncing"""
         self.search_timer.stop()
@@ -643,21 +744,50 @@ class OptionsDialog(QDialog):
         if self.parent_window and hasattr(self.parent_window, 'settings'):
             settings = self.parent_window.settings
             
+            # Update last opened file display
+            last_file = settings.get('last_selected_file', 'None')
+            if last_file and last_file != 'None':
+                # Show just the filename for better readability
+                filename = os.path.basename(last_file)
+                self.last_file_label.setText(filename)
+                self.last_file_label.setToolTip(last_file)  # Full path in tooltip
+            else:
+                self.last_file_label.setText('None')
+                self.last_file_label.setToolTip('')
+            
+            # Define default values for new settings
+            defaults = {
+                'open_last_file_on_startup': True,
+                'excel_prompt_for_options': True,
+                'excel_import_with_formatting': False,
+                'excel_default_apply_background_colors': True,
+                'excel_default_apply_text_colors': True,
+                'excel_default_apply_borders': False,
+                'excel_default_apply_font_family': True,
+                'excel_default_apply_font_size': True,
+                'excel_default_apply_font_style': True,
+                'excel_default_preserve_formulas': False,
+                'excel_default_convert_dates': True
+            }
+            
             # Load settings into widgets
             for key, widget in self.option_widgets.items():
-                if key in settings:
-                    value = settings[key]
-                    
-                    if isinstance(widget, QCheckBox):
-                        widget.setChecked(bool(value))
-                    elif isinstance(widget, QComboBox):
-                        index = widget.findText(str(value))
-                        if index >= 0:
-                            widget.setCurrentIndex(index)
-                    elif isinstance(widget, (QSpinBox, QSlider)):
+                # Use setting value if exists, otherwise use default
+                value = settings.get(key, defaults.get(key))
+                
+                if isinstance(widget, QCheckBox):
+                    widget.setChecked(bool(value))
+                elif isinstance(widget, QComboBox):
+                    index = widget.findText(str(value))
+                    if index >= 0:
+                        widget.setCurrentIndex(index)
+                elif isinstance(widget, (QSpinBox, QSlider)):
+                    if value is not None:
                         widget.setValue(int(value))
-                    elif isinstance(widget, QLineEdit):
-                        widget.setText(str(value))
+                    else:
+                        widget.setValue(0)  # Default value
+                elif isinstance(widget, QLineEdit):
+                    widget.setText(str(value))
                         
     def get_options(self):
         """Get all options from the dialog"""

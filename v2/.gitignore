@@ -15,7 +15,7 @@ build/
 *.py,cover
 .cache/
 
-# Файлы IDE
+# Файлы *.py,cover не несут никакого смысла
 .vercel/
 .vscode/
-.idea/
+

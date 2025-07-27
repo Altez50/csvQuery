@@ -7,14 +7,16 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QListWidget, QCheckBox, QDialogButtonBox,
                              QToolBar, QAction, QMenu, QApplication, QInputDialog,
                              QComboBox, QListWidgetItem, QRadioButton, QButtonGroup)
-from PyQt5.QtCore import Qt, QEvent, QSize
-from PyQt5.QtGui import QIcon, QColor, QKeySequence, QFont, QBrush
+from PyQt5.QtCore import Qt, QEvent, QSize, QPoint, QRect, QUrl
+from PyQt5.QtGui import QIcon, QColor, QKeySequence, QFont, QBrush, QPainter, QPen, QPixmap, QCursor
+from PyQt5.QtMultimedia import QSoundEffect
 import sqlite3
 import colorsys
 from collections import defaultdict
 try:
     import openpyxl
     from openpyxl.styles import Font, PatternFill
+    from formula_engine import FormulaEngine
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
@@ -126,6 +128,381 @@ class AdvancedSearchDialog(QDialog):
             item = self.columns_list.item(i)
             item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
 
+class DragDropTableWidget(QTableWidget):
+    """Custom QTableWidget with right-click region drag-and-drop functionality"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_drag_mode = False
+        self.drag_start_pos = None
+        self.drag_object = None  # Store dragged data
+        self.drag_source_range = None  # Source selection range
+        self.undo_data = None  # For Ctrl-Z functionality
+        self.original_cursor = self.cursor()
+        
+        # Load sound effects
+        self.take_sound = QSoundEffect()
+        self.take_sound.setSource(QUrl.fromLocalFile("./sounds/take_coins.wav"))
+        
+        self.put_sound = QSoundEffect()
+        self.put_sound.setSource(QUrl.fromLocalFile("./sounds/put_coins.wav"))
+        
+        # Load custom cursor
+        try:
+            coins_pixmap = QPixmap("./icons/coins.png")
+            if not coins_pixmap.isNull():
+                self.coins_cursor = QCursor(coins_pixmap)
+            else:
+                self.coins_cursor = QCursor(Qt.ClosedHandCursor)
+        except:
+            self.coins_cursor = QCursor(Qt.ClosedHandCursor)
+        
+    def mousePressEvent(self, event):
+        """Handle mouse press events"""
+        if event.button() == Qt.RightButton:
+            # print("DEBUG: Right mouse button pressed!")
+            # Check Scroll Lock status using QApplication.queryKeyboardModifiers()
+            try:
+                import win32api
+                scroll_lock_on = win32api.GetKeyState(0x91) & 1  # VK_SCROLL = 0x91
+                # print(f"DEBUG: mousePressEvent - Scroll Lock state: {scroll_lock_on}")
+            except ImportError as e:
+                # Fallback: assume Scroll Lock is always ON for testing
+                scroll_lock_on = True
+                # print(f"DEBUG: mousePressEvent - win32api not available ({e}), assuming Scroll Lock ON")
+            
+            if scroll_lock_on:
+                # Enter drag mode when Scroll Lock is ON
+                # print("DEBUG: Entering drag mode (Scroll Lock ON)")
+                self.enter_drag_mode(event.pos())
+            else:
+                # Standard widget behavior when Scroll Lock is OFF
+                # print("DEBUG: Using standard mouse behavior (Scroll Lock OFF)")
+                super().mousePressEvent(event)
+        elif event.button() == Qt.LeftButton and self.is_drag_mode:
+            # Exit drag mode and perform drop
+            self.exit_drag_mode(event.pos())
+        else:
+            super().mousePressEvent(event)
+            
+    def mouseMoveEvent(self, event):
+        if self.is_drag_mode:
+            # Handle drag selection if right button is still pressed
+            if event.buttons() & Qt.RightButton and self.drag_start_pos:
+                # Create selection rectangle from start to current position
+                drag_rect = QRect(self.drag_start_pos, event.pos()).normalized()
+                self.select_cells_in_rect(drag_rect)
+                self.update_drag_object()
+        else:
+            super().mouseMoveEvent(event)
+            
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.RightButton and self.is_drag_mode:
+            # Right button released - finalize drag object selection
+            self.update_drag_object()
+        else:
+            super().mouseReleaseEvent(event)
+            
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape and self.is_drag_mode:
+            # Cancel drag mode
+            self.cancel_drag_mode()
+        elif event.matches(QKeySequence.Undo):  # Ctrl+Z
+            self.undo_last_operation()
+        else:
+            super().keyPressEvent(event)
+            
+    def contextMenuEvent(self, event):
+        """Handle context menu events - suppress when Scroll Lock is ON"""
+        # print("DEBUG: contextMenuEvent called!")
+        # Check Scroll Lock status
+        try:
+            import win32api
+            scroll_lock_on = win32api.GetKeyState(0x91) & 1  # VK_SCROLL = 0x91
+            # print(f"DEBUG: Scroll Lock state: {scroll_lock_on}")
+        except ImportError as e:
+            # Fallback: assume Scroll Lock is always ON for testing
+            scroll_lock_on = True
+            # print(f"DEBUG: win32api not available ({e}), assuming Scroll Lock ON")
+        
+        if not scroll_lock_on:
+            # Show context menu only when Scroll Lock is OFF
+            # print("DEBUG: Showing context menu (Scroll Lock OFF)")
+            super().contextMenuEvent(event)
+        else:
+            # When Scroll Lock is ON, do nothing (suppress context menu)
+            # print("DEBUG: Suppressing context menu (Scroll Lock ON)")
+            event.ignore()
+            
+    def select_cells_in_rect(self, rect):
+        """Select all cells that intersect with the given rectangle"""
+        if not rect or rect.isEmpty():
+            return
+            
+        # Clear current selection
+        self.clearSelection()
+        
+        # Find the range of rows and columns that intersect with the rectangle
+        top_row = self.rowAt(rect.top())
+        bottom_row = self.rowAt(rect.bottom())
+        left_col = self.columnAt(rect.left())
+        right_col = self.columnAt(rect.right())
+        
+        # Handle edge cases
+        if top_row == -1:
+            top_row = 0
+        if bottom_row == -1:
+            bottom_row = self.rowCount() - 1
+        if left_col == -1:
+            left_col = 0
+        if right_col == -1:
+            right_col = self.columnCount() - 1
+            
+        # Select the range
+        if (top_row >= 0 and bottom_row >= 0 and 
+            left_col >= 0 and right_col >= 0):
+            for row in range(top_row, bottom_row + 1):
+                for col in range(left_col, right_col + 1):
+                    if row < self.rowCount() and col < self.columnCount():
+                        item = self.item(row, col)
+                        if not item:
+                            # Create item if it doesn't exist
+                            item = QTableWidgetItem("")
+                            self.setItem(row, col, item)
+                        item.setSelected(True)
+                            
+    def paintEvent(self, event):
+        """Custom paint event"""
+        super().paintEvent(event)
+            
+    def enter_drag_mode(self, pos):
+        """Enter drag mode on right-click"""
+        self.is_drag_mode = True
+        self.drag_start_pos = pos
+        
+        # Play take sound
+        self.take_sound.play()
+        
+        # Change cursor
+        self.setCursor(self.coins_cursor)
+        
+        # Determine drag object
+        clicked_row = self.rowAt(pos.y())
+        clicked_col = self.columnAt(pos.x())
+        
+        if clicked_row >= 0 and clicked_col >= 0:
+            # Check if clicked cell is in current selection
+            selected_ranges = self.selectedRanges()
+            cell_in_selection = False
+            
+            for sel_range in selected_ranges:
+                if (sel_range.topRow() <= clicked_row <= sel_range.bottomRow() and
+                    sel_range.leftColumn() <= clicked_col <= sel_range.rightColumn()):
+                    cell_in_selection = True
+                    break
+            
+            if not cell_in_selection:
+                # Select single cell
+                self.clearSelection()
+                self.setCurrentCell(clicked_row, clicked_col)
+                item = self.item(clicked_row, clicked_col)
+                if item:
+                    item.setSelected(True)
+            else:
+                # Cell is already in selection, update drag object immediately
+                self.update_drag_object()
+            
+    def exit_drag_mode(self, pos):
+        """Exit drag mode on left-click and perform drop"""
+        if not self.is_drag_mode or not self.drag_object:
+            return
+            
+        # Play put sound
+        self.put_sound.play()
+        
+        # Restore cursor
+        self.setCursor(self.original_cursor)
+        
+        # Get target position
+        target_row = self.rowAt(pos.y())
+        target_col = self.columnAt(pos.x())
+        
+        if target_row >= 0 and target_col >= 0:
+            # Save current target area for undo
+            self.save_undo_data(target_row, target_col)
+            
+            # Check if Ctrl is pressed for copy vs move
+            modifiers = QApplication.keyboardModifiers()
+            is_copy = modifiers & Qt.ControlModifier
+            
+            # Perform drop operation
+            self.drop_data_at_position(target_row, target_col, is_copy)
+        
+        self.is_drag_mode = False
+        self.drag_object = None
+        self.drag_source_range = None
+        
+    def cancel_drag_mode(self):
+        """Cancel drag mode (Escape key)"""
+        self.is_drag_mode = False
+        self.drag_object = None
+        self.drag_source_range = None
+        self.setCursor(self.original_cursor)
+        
+    def update_drag_object(self):
+        """Update drag object from current selection"""
+        selected_ranges = self.selectedRanges()
+        if not selected_ranges:
+            return
+            
+        # Find the bounding box of all selected ranges
+        min_row = min(r.topRow() for r in selected_ranges)
+        max_row = max(r.bottomRow() for r in selected_ranges)
+        min_col = min(r.leftColumn() for r in selected_ranges)
+        max_col = max(r.rightColumn() for r in selected_ranges)
+        
+        self.drag_source_range = {
+            'top_row': min_row,
+            'bottom_row': max_row,
+            'left_col': min_col,
+            'right_col': max_col
+        }
+        
+        # Copy data from selected cells
+        self.drag_object = []
+        for row in range(min_row, max_row + 1):
+            row_data = []
+            for col in range(min_col, max_col + 1):
+                item = self.item(row, col)
+                cell_text = item.text() if item else ""
+                row_data.append(cell_text)
+            self.drag_object.append(row_data)
+            
+    def save_undo_data(self, target_row, target_col):
+        """Save current state for undo functionality"""
+        if not self.drag_object or not self.drag_source_range:
+            return
+            
+        # Save source data
+        source_data = []
+        for row in range(self.drag_source_range['top_row'], self.drag_source_range['bottom_row'] + 1):
+            row_data = []
+            for col in range(self.drag_source_range['left_col'], self.drag_source_range['right_col'] + 1):
+                item = self.item(row, col)
+                cell_text = item.text() if item else ""
+                row_data.append(cell_text)
+            source_data.append(row_data)
+        
+        # Save target data
+        target_data = []
+        rows_count = len(self.drag_object)
+        cols_count = len(self.drag_object[0]) if self.drag_object else 0
+        
+        for row_offset in range(rows_count):
+            row_data = []
+            for col_offset in range(cols_count):
+                check_row = target_row + row_offset
+                check_col = target_col + col_offset
+                if check_row < self.rowCount() and check_col < self.columnCount():
+                    item = self.item(check_row, check_col)
+                    cell_text = item.text() if item else ""
+                    row_data.append(cell_text)
+                else:
+                    row_data.append("")
+            target_data.append(row_data)
+        
+        self.undo_data = {
+            'source_range': self.drag_source_range.copy(),
+            'source_data': source_data,
+            'target_row': target_row,
+            'target_col': target_col,
+            'target_data': target_data
+        }
+        
+    def drop_data_at_position(self, target_row, target_col, is_copy):
+        """Drop data at target position"""
+        if not self.drag_object:
+            return
+            
+        # Paste the data
+        for row_offset, row_data in enumerate(self.drag_object):
+            for col_offset, cell_value in enumerate(row_data):
+                paste_row = target_row + row_offset
+                paste_col = target_col + col_offset
+                
+                # Check bounds
+                if paste_row < self.rowCount() and paste_col < self.columnCount():
+                    # Create item if it doesn't exist
+                    item = self.item(paste_row, paste_col)
+                    if not item:
+                        item = QTableWidgetItem()
+                        self.setItem(paste_row, paste_col, item)
+                    
+                    item.setText(cell_value)
+        
+        # If it's a move operation (not copy), clear the source cells
+        if not is_copy and self.drag_source_range:
+            for row in range(self.drag_source_range['top_row'], self.drag_source_range['bottom_row'] + 1):
+                for col in range(self.drag_source_range['left_col'], self.drag_source_range['right_col'] + 1):
+                    item = self.item(row, col)
+                    if item:
+                        item.setText("")
+        
+        # Select the dropped area
+        self.clearSelection()
+        rows_count = len(self.drag_object)
+        cols_count = len(self.drag_object[0]) if self.drag_object else 0
+        
+        for row_offset in range(rows_count):
+            for col_offset in range(cols_count):
+                select_row = target_row + row_offset
+                select_col = target_col + col_offset
+                if select_row < self.rowCount() and select_col < self.columnCount():
+                    item = self.item(select_row, select_col)
+                    if item:
+                        item.setSelected(True)
+                        
+    def undo_last_operation(self):
+        """Undo last drag-drop operation (Ctrl+Z)"""
+        if not self.undo_data:
+            return
+            
+        # Restore source data
+        source_range = self.undo_data['source_range']
+        source_data = self.undo_data['source_data']
+        
+        for row_offset, row_data in enumerate(source_data):
+            for col_offset, cell_value in enumerate(row_data):
+                restore_row = source_range['top_row'] + row_offset
+                restore_col = source_range['left_col'] + col_offset
+                
+                if restore_row < self.rowCount() and restore_col < self.columnCount():
+                    item = self.item(restore_row, restore_col)
+                    if not item:
+                        item = QTableWidgetItem()
+                        self.setItem(restore_row, restore_col, item)
+                    item.setText(cell_value)
+        
+        # Restore target data
+        target_row = self.undo_data['target_row']
+        target_col = self.undo_data['target_col']
+        target_data = self.undo_data['target_data']
+        
+        for row_offset, row_data in enumerate(target_data):
+            for col_offset, cell_value in enumerate(row_data):
+                restore_row = target_row + row_offset
+                restore_col = target_col + col_offset
+                
+                if restore_row < self.rowCount() and restore_col < self.columnCount():
+                    item = self.item(restore_row, restore_col)
+                    if not item:
+                        item = QTableWidgetItem()
+                        self.setItem(restore_row, restore_col, item)
+                    item.setText(cell_value)
+        
+        # Clear undo data
+        self.undo_data = None
+
 class CSVEditor(QWidget):
     def __init__(self, main_window):
         super().__init__()
@@ -137,7 +514,10 @@ class CSVEditor(QWidget):
         self.advanced_search_settings = None
         self.active_filters = {}  # Store active filters by column
         self.cell_formatting = {}  # Store cell formatting: {(row, col): {'bg_color': QColor, 'text_color': QColor, 'font': QFont}}
+        self.cell_formulas = {}  # Store formula information for cells: {(row, col): formula_string}
         self.column_widths = {}  # Store Excel column width information: {col_idx: width_in_pixels}
+        self.current_file = None  # Store current file path
+        self.current_table_name = None  # Store current table name when loaded from database
         
         self.init_ui()
         
@@ -202,8 +582,8 @@ class CSVEditor(QWidget):
         self.filters_widget.setVisible(False)  # Hidden by default
         layout.addWidget(self.filters_widget)
         
-        # Table widget
-        self.table = QTableWidget()
+        # Table widget with drag-drop functionality
+        self.table = DragDropTableWidget()
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectItems)  # Default to column selection
         self.table.setSortingEnabled(True)
@@ -215,6 +595,10 @@ class CSVEditor(QWidget):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.installEventFilter(self)
+        
+        # Connect signals for formula editing
+        self.table.itemChanged.connect(self.on_item_changed)
+        self.table.itemDoubleClicked.connect(self.on_item_double_clicked)
         
         layout.addWidget(self.table)
         
@@ -242,15 +626,52 @@ class CSVEditor(QWidget):
             self, "Load Excel File", "", "Excel files (*.xlsx *.xls);;All files (*.*)"
         )
         if file_path:
-            # Show formatting options dialog
-            from excel_format_dialog import ExcelFormatDialog
-            dialog = ExcelFormatDialog(self)
-            if dialog.exec_() == QDialog.Accepted:
-                options = dialog.get_options()
-                self.load_excel_file_with_formatting(file_path, options)
+            # Check if we should prompt for options
+            prompt_for_options = True
+            if hasattr(self.main_window, 'settings'):
+                prompt_for_options = self.main_window.settings.get('excel_prompt_for_options', True)
+            
+            if prompt_for_options:
+                # Show formatting options dialog
+                from excel_format_dialog import ExcelFormatDialog
+                dialog = ExcelFormatDialog(self.main_window)
+                if dialog.exec_() == QDialog.Accepted:
+                    options = dialog.get_options()
+                    self.load_excel_file_with_formatting(file_path, options)
+                else:
+                    # Load without formatting
+                    self.load_excel_file_simple(file_path)
             else:
-                # Load without formatting
-                self.load_excel_file_simple(file_path)
+                # Use default settings from options
+                options = self.get_default_excel_options()
+                self.load_excel_file_with_formatting(file_path, options)
+    
+    def get_default_excel_options(self):
+        """Get default Excel import options from settings"""
+        if hasattr(self.main_window, 'settings'):
+            settings = self.main_window.settings
+            return {
+                'apply_background_colors': settings.get('excel_default_apply_background_colors', True),
+                'apply_text_colors': settings.get('excel_default_apply_text_colors', True),
+                'apply_borders': settings.get('excel_default_apply_borders', False),
+                'apply_font_family': settings.get('excel_default_apply_font_family', True),
+                'apply_font_size': settings.get('excel_default_apply_font_size', True),
+                'apply_font_style': settings.get('excel_default_apply_font_style', True),
+                'preserve_formulas': settings.get('excel_default_preserve_formulas', False),
+                'convert_dates': settings.get('excel_default_convert_dates', True)
+            }
+        else:
+            # Default values if no settings available
+            return {
+                'apply_background_colors': True,
+                'apply_text_colors': True,
+                'apply_borders': False,
+                'apply_font_family': True,
+                'apply_font_size': True,
+                'apply_font_style': True,
+                'preserve_formulas': False,
+                'convert_dates': True
+            }
             
     def load_csv_file(self, file_path):
         """Load CSV file from path"""
@@ -259,9 +680,13 @@ class CSVEditor(QWidget):
             df = pd.read_csv(file_path, encoding='utf-8')
             self.csv_headers = list(df.columns)
             self.csv_data = df.values.tolist()
+            self.cell_formulas = {}  # Clear formulas for CSV files
             self.column_widths = {}  # Clear column widths for CSV files
+            self.current_file = file_path  # Store current file path
+            self.current_table_name = None  # Clear table name when loading from file
             
             self.update_table_display()
+            self.update_main_window_title()
             self.main_window.log_message(f"CSV loaded: {len(self.csv_data)} rows, {len(self.csv_headers)} columns")
             
         except Exception as e:
@@ -274,9 +699,13 @@ class CSVEditor(QWidget):
             self.csv_headers = list(df.columns)
             self.csv_data = df.values.tolist()
             self.cell_formatting = {}  # Clear any existing formatting
+            self.cell_formulas = {}  # Clear formulas for simple Excel loading
             self.column_widths = {}  # Clear column widths for simple Excel loading
+            self.current_file = file_path  # Store current file path
+            self.current_table_name = None  # Clear table name when loading from file
             
             self.update_table_display()
+            self.update_main_window_title()
             self.main_window.log_message(f"Excel loaded: {len(self.csv_data)} rows, {len(self.csv_headers)} columns")
             
         except Exception as e:
@@ -293,6 +722,7 @@ class CSVEditor(QWidget):
             data = []
             headers = []
             self.cell_formatting = {}
+            self.cell_formulas = {}  # Clear formulas for Excel loading
             self.column_widths = {}
             
             # Extract column widths from Excel
@@ -306,10 +736,48 @@ class CSVEditor(QWidget):
             first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
             headers = [str(cell) if cell is not None else f"Column_{i+1}" for i, cell in enumerate(first_row)]
             
+            # Initialize FormulaEngine if formula evaluation is enabled
+            formula_engine = None
+            if options.get('evaluate_formulas', False) and not options['preserve_formulas']:
+                # Prepare data for FormulaEngine
+                worksheet_data = []
+                for row in ws.iter_rows(min_row=1, values_only=False):
+                    row_data = []
+                    for cell in row:
+                        if cell.value is None:
+                            row_data.append("")
+                        elif hasattr(cell, 'data_type') and cell.data_type == 'f':  # Formula cell
+                            row_data.append(cell.value)  # Keep original formula
+                        else:
+                            row_data.append(cell.value)
+                    worksheet_data.append(row_data)
+                
+                formula_engine = FormulaEngine(worksheet_data)
+            
             # Get data from remaining rows
-            for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=0):
+            for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=False), start=0):
                 row_data = []
-                for col_idx, cell_value in enumerate(row):
+                for col_idx, cell in enumerate(row):
+                    cell_value = cell.value
+                    
+                    # Handle formula preservation
+                    if (options['preserve_formulas'] and hasattr(cell, 'data_type') and 
+                        cell.data_type == 'f' and cell.value):
+                        # Store the formula in cell_formulas
+                        self.cell_formulas[(row_idx, col_idx)] = cell.value
+                        # Display the formula as the cell value
+                        cell_value = cell.value
+                    # Handle formula evaluation
+                    elif (formula_engine and hasattr(cell, 'data_type') and 
+                        cell.data_type == 'f' and options.get('evaluate_formulas', False)):
+                        try:
+                            # Evaluate formula
+                            evaluated_value = formula_engine.evaluate_formula(cell_value, f"{chr(65+col_idx)}{row_idx+2}")
+                            cell_value = evaluated_value
+                        except Exception as e:
+                            # If formula evaluation fails, keep original value or show error
+                            cell_value = f"#ERROR: {str(e)}"
+                    
                     if cell_value is None:
                         row_data.append("")
                     elif options['convert_dates'] and hasattr(cell_value, 'strftime'):
@@ -320,18 +788,32 @@ class CSVEditor(QWidget):
             
             # Extract formatting if requested
             if any([options['apply_background_colors'], options['apply_text_colors'], 
-                   options['apply_font_family'], options['apply_font_size'], options['apply_font_style']]):
+                   options['apply_font_family'], options['apply_font_size'], options['apply_font_style'],
+                   options.get('show_formula_indicators', False)]):
                 
                 for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=0):
                     for col_idx, cell in enumerate(row):
-                        if cell.value is not None or any([cell.fill.start_color.rgb != '00000000', 
-                                                          cell.font.color and cell.font.color.rgb != '00000000']):
+                        if (cell.value is not None or 
+                            any([cell.fill.start_color.rgb != '00000000', 
+                                cell.font.color and cell.font.color.rgb != '00000000']) or
+                            (options.get('show_formula_indicators', False) and 
+                             hasattr(cell, 'data_type') and cell.data_type == 'f')):
                             
                             formatting = {}
                             
+                            # Add formula indicator
+                            if (options.get('show_formula_indicators', False) and 
+                                hasattr(cell, 'data_type') and cell.data_type == 'f'):
+                                formatting['is_formula'] = True
+                            
+                            # Mark as formula cell if preserve_formulas is enabled
+                            if (options['preserve_formulas'] and hasattr(cell, 'data_type') and 
+                                cell.data_type == 'f' and cell.value):
+                                formatting['is_formula'] = True
+                            
                             # Background color
                             if options['apply_background_colors'] and cell.fill.start_color.rgb != '00000000':
-                                rgb = cell.fill.start_color.rgb
+                                rgb = str(cell.fill.start_color.rgb)
                                 if len(rgb) == 8:  # ARGB format
                                     rgb = rgb[2:]  # Remove alpha channel
                                 if len(rgb) == 6:
@@ -342,7 +824,7 @@ class CSVEditor(QWidget):
                             
                             # Text color
                             if options['apply_text_colors'] and cell.font.color and cell.font.color.rgb != '00000000':
-                                rgb = cell.font.color.rgb
+                                rgb = str(cell.font.color.rgb)
                                 if len(rgb) == 8:  # ARGB format
                                     rgb = rgb[2:]  # Remove alpha channel
                                 if len(rgb) == 6:
@@ -376,8 +858,11 @@ class CSVEditor(QWidget):
             
             self.csv_headers = headers
             self.csv_data = data
+            self.current_file = file_path  # Store current file path
+            self.current_table_name = None  # Clear table name when loading from file
             
             self.update_table_display()
+            self.update_main_window_title()
             self.main_window.log_message(f"Excel loaded with formatting: {len(self.csv_data)} rows, {len(self.csv_headers)} columns")
             
         except Exception as e:
@@ -398,6 +883,8 @@ class CSVEditor(QWidget):
         try:
             df = pd.DataFrame(self.csv_data, columns=self.csv_headers)
             df.to_csv(file_path, index=False, encoding='utf-8')
+            self.current_file = file_path  # Update current file path
+            self.update_main_window_title()
             self.main_window.log_message(f"CSV saved to {file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save CSV: {e}")
@@ -491,6 +978,8 @@ class CSVEditor(QWidget):
             
             # Save the workbook
             wb.save(file_path)
+            self.current_file = file_path  # Update current file path
+            self.update_main_window_title()
             self.main_window.log_message(f"Excel file saved to {file_path}")
             
         except Exception as e:
@@ -528,6 +1017,21 @@ class CSVEditor(QWidget):
                     # Apply font
                     if 'font' in formatting:
                         item.setFont(formatting['font'])
+                    
+                    # Apply formula indicator (green border)
+                    if formatting.get('is_formula', False):
+                        # Add a green background tint to indicate formula cells
+                        current_bg = item.background().color() if item.background().color().isValid() else QColor(255, 255, 255)
+                        formula_bg = QColor(240, 255, 240)  # Light green tint
+                        # Blend the colors
+                        blended = QColor(
+                            int((current_bg.red() + formula_bg.red()) / 2),
+                            int((current_bg.green() + formula_bg.green()) / 2),
+                            int((current_bg.blue() + formula_bg.blue()) / 2)
+                        )
+                        item.setBackground(QBrush(blended))
+                        # Add tooltip to indicate it's a formula
+                        item.setToolTip("Formula cell")
                 
                 self.table.setItem(row_idx, col_idx, item)
         
@@ -704,9 +1208,27 @@ class CSVEditor(QWidget):
         self.csv_headers = headers
         self.csv_data = data
         self.cell_formatting = {}  # Clear any existing formatting
+        self.cell_formulas = {}  # Clear formulas for direct data loading
         self.column_widths = {}  # Clear column widths for direct data loading
+        self.current_file = None  # Clear current file since this is direct data loading
+        self.current_table_name = None  # Clear current table name since this is direct data loading
         self.update_table_display()
+        self.update_main_window_title()
         self.main_window.log_message(f"Data loaded: {len(self.csv_data)} rows, {len(self.csv_headers)} columns")
+        
+    def update_main_window_title(self):
+        """Update main window title to show current file or table being edited"""
+        base_title = "CSV Query Tool - VSCode Style"
+        if self.current_table_name:
+            # Show table name when data is loaded from database
+            self.main_window.setWindowTitle(f"{base_title} - Table: {self.current_table_name}")
+        elif self.current_file:
+            # Show filename when data is loaded from file
+            import os
+            filename = os.path.basename(self.current_file)
+            self.main_window.setWindowTitle(f"{base_title} - {filename}")
+        else:
+            self.main_window.setWindowTitle(base_title)
         
     def clear_table(self):
         """Clear table data"""
@@ -714,11 +1236,14 @@ class CSVEditor(QWidget):
         self.csv_headers = []
         self.cell_formatting = {}  # Clear formatting data
         self.column_widths = {}  # Clear column width data
+        self.current_file = None  # Clear current file
+        self.current_table_name = None  # Clear current table name
         self.table.clear()
         self.table.setRowCount(0)
         self.table.setColumnCount(0)
         self.status_label.setText("No data loaded")
         self.main_window.row_count_label.setText("0 rows")
+        self.update_main_window_title()
         
     def apply_intelligent_column_sizing(self):
         """Apply intelligent column width sizing based on content and Excel formatting"""
@@ -867,6 +1392,24 @@ class CSVEditor(QWidget):
         
     def show_context_menu(self, position):
         """Show context menu for table operations"""
+        # print("DEBUG: show_context_menu called!")
+        
+        # Check Scroll Lock status - suppress menu if ON
+        try:
+            import win32api
+            scroll_lock_on = win32api.GetKeyState(0x91) & 1  # VK_SCROLL = 0x91
+            # print(f"DEBUG: show_context_menu - Scroll Lock state: {scroll_lock_on}")
+        except ImportError as e:
+            # Fallback: assume Scroll Lock is always ON for testing
+            scroll_lock_on = True
+            # print(f"DEBUG: show_context_menu - win32api not available ({e}), assuming Scroll Lock ON")
+        
+        if scroll_lock_on:
+            # print("DEBUG: Suppressing context menu (Scroll Lock ON)")
+            return  # Suppress context menu when Scroll Lock is ON
+        
+        # print("DEBUG: Showing context menu (Scroll Lock OFF)")
+        
         if not self.csv_headers:
             return
             
@@ -1490,3 +2033,131 @@ class CSVEditor(QWidget):
             return cell_value != filter_value
         
         return False
+    
+    def on_item_changed(self, item):
+        """Handle cell value changes and formula evaluation"""
+        if not item:
+            return
+            
+        row = item.row()
+        col = item.column()
+        new_value = item.text()
+        
+        # Update CSV data
+        if row < len(self.csv_data) and col < len(self.csv_data[row]):
+            self.csv_data[row][col] = new_value
+            
+        # Check if the value is a formula (starts with =)
+        if new_value.startswith('='):
+            try:
+                # Import FormulaEngine
+                from formula_engine import FormulaEngine
+                
+                # Create formula engine with current data
+                formula_engine = FormulaEngine(self.csv_data)
+                
+                # Calculate cell address (A1, B2, etc.)
+                cell_address = f"{chr(65 + col)}{row + 1}"
+                
+                # Evaluate formula
+                result = formula_engine.evaluate_formula(new_value, cell_address)
+                
+                # Temporarily disconnect signal to avoid recursion
+                self.table.itemChanged.disconnect(self.on_item_changed)
+                
+                # Update display with result but keep formula in data
+                display_item = QTableWidgetItem(str(result))
+                
+                # Mark as formula cell with special formatting
+                display_item.setBackground(QBrush(QColor(240, 255, 240)))  # Light green
+                display_item.setToolTip(f"Formula: {new_value}\nResult: {result}")
+                
+                # Store original formula in cell formatting
+                if not hasattr(self, 'cell_formulas'):
+                    self.cell_formulas = {}
+                self.cell_formulas[(row, col)] = new_value
+                
+                self.table.setItem(row, col, display_item)
+                
+                # Reconnect signal
+                self.table.itemChanged.connect(self.on_item_changed)
+                
+                # Update other cells that might reference this cell
+                self.update_dependent_formulas()
+                
+            except Exception as e:
+                # Show error in cell
+                self.table.itemChanged.disconnect(self.on_item_changed)
+                error_item = QTableWidgetItem(f"#ERROR: {str(e)}")
+                error_item.setBackground(QBrush(QColor(255, 240, 240)))  # Light red
+                error_item.setToolTip(f"Formula: {new_value}\nError: {str(e)}")
+                self.table.setItem(row, col, error_item)
+                self.table.itemChanged.connect(self.on_item_changed)
+        else:
+            # Regular value, clear any formula formatting
+            if hasattr(self, 'cell_formulas') and (row, col) in self.cell_formulas:
+                del self.cell_formulas[(row, col)]
+            
+            # Reset background color for non-formula cells
+            item.setBackground(QBrush(QColor(255, 255, 255)))
+            item.setToolTip("")
+    
+    def update_dependent_formulas(self):
+        """Update all formula cells that might be affected by data changes"""
+        if not hasattr(self, 'cell_formulas'):
+            return
+            
+        try:
+            from formula_engine import FormulaEngine
+            formula_engine = FormulaEngine(self.csv_data)
+            
+            # Temporarily disconnect signal
+            self.table.itemChanged.disconnect(self.on_item_changed)
+            
+            # Re-evaluate all formula cells
+            for (row, col), formula in self.cell_formulas.items():
+                try:
+                    cell_address = f"{chr(65 + col)}{row + 1}"
+                    result = formula_engine.evaluate_formula(formula, cell_address)
+                    
+                    # Update display
+                    display_item = QTableWidgetItem(str(result))
+                    display_item.setBackground(QBrush(QColor(240, 255, 240)))
+                    display_item.setToolTip(f"Formula: {formula}\nResult: {result}")
+                    self.table.setItem(row, col, display_item)
+                    
+                except Exception as e:
+                    # Show error
+                    error_item = QTableWidgetItem(f"#ERROR: {str(e)}")
+                    error_item.setBackground(QBrush(QColor(255, 240, 240)))
+                    error_item.setToolTip(f"Formula: {formula}\nError: {str(e)}")
+                    self.table.setItem(row, col, error_item)
+            
+            # Reconnect signal
+            self.table.itemChanged.connect(self.on_item_changed)
+            
+        except Exception as e:
+            # Reconnect signal even if there's an error
+             self.table.itemChanged.connect(self.on_item_changed)
+             print(f"Error updating dependent formulas: {e}")
+    
+    def on_item_double_clicked(self, item):
+        """Handle double-click on formula cells to edit the formula"""
+        if not item:
+            return
+            
+        row = item.row()
+        col = item.column()
+        
+        # Check if this cell contains a formula
+        if hasattr(self, 'cell_formulas') and (row, col) in self.cell_formulas:
+            formula = self.cell_formulas[(row, col)]
+            
+            # Temporarily disconnect signal to avoid recursion
+            self.table.itemChanged.disconnect(self.on_item_changed)
+            
+            # Set the formula text for editing
+            item.setText(formula)
+            
+            # Reconnect signal
+            self.table.itemChanged.connect(self.on_item_changed)

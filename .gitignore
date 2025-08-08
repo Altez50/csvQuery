@@ -12,6 +12,7 @@ build/
 
 # Файлы покрытия, кэши и прочие ненужные файлы
 .coverage
+.spec
 *.py,cover
 .cache/
 

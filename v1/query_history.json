@@ -28,5 +28,20 @@
         }
       }
     ]
+  },
+  {
+    "name": "Группа 1",
+    "query": "",
+    "task_numbers": "",
+    "params": {},
+    "queries": [
+      {
+        "query": "SELECT imported_data.[идентификатор проблемы], imported_data.тема,\"imported_data\".\"наблюдатели_1\"\nFROM imported_data limit 1;\r\n",
+        "task_numbers": "",
+        "params": {
+          "task_numbers": ""
+        }
+      }
+    ]
   }
 ]

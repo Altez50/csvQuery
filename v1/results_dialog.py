@@ -6,9 +6,17 @@ from PyQt5.QtCore import Qt, QSettings, QByteArray
 class ResultsDialog(QWidget):
     def __init__(self, sql_query_page=None):
         super().__init__()
-        self.setWindowTitle('Результаты запроса1')
+        self.setWindowTitle('Результаты запроса')
         self.setMinimumWidth(700)
         self.sql_query_page = sql_query_page
+        
+        # Apply dark theme if main window has it
+        self.dark_theme = False
+        if sql_query_page:
+            # Try to get main window through sql_query_page's get_mainwindow method
+            main_window = sql_query_page.get_mainwindow()
+            if main_window and hasattr(main_window, 'dark_theme'):
+                self.dark_theme = main_window.dark_theme
         layout = QVBoxLayout(self)
 
         self.results_selector = QComboBox()
@@ -41,6 +49,10 @@ class ResultsDialog(QWidget):
         self.status_label.setStyleSheet("color: #005500; padding: 2px;")
         layout.addWidget(self.status_label)
         self.setLayout(layout)
+        
+        # Apply theme
+        self.apply_theme()
+        
         self.update_results_view()
         self._settings = QSettings('csvQuery', 'ResultsDialog')
         self.restore_geometry()
@@ -56,6 +68,55 @@ class ResultsDialog(QWidget):
         geom = self._settings.value('geometry')
         if geom:
             self.restoreGeometry(geom)
+    
+    def apply_theme(self):
+        """Apply dark or light theme to the results dialog"""
+        if self.dark_theme:
+            # Dark theme
+            self.setStyleSheet("""
+                QWidget {
+                    background-color: #2b2b2b;
+                    color: #ffffff;
+                }
+                QTableWidget {
+                    background-color: #3c3c3c;
+                    color: #ffffff;
+                    gridline-color: #555555;
+                    selection-background-color: #0078d4;
+                }
+                QHeaderView::section {
+                    background-color: #4a4a4a;
+                    color: #ffffff;
+                    border: 1px solid #555555;
+                }
+                QPushButton {
+                    background-color: #4a4a4a;
+                    color: #ffffff;
+                    border: 1px solid #666666;
+                    padding: 4px 8px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #5a5a5a;
+                }
+                QPushButton:pressed {
+                    background-color: #3a3a3a;
+                }
+                QComboBox {
+                    background-color: #3c3c3c;
+                    color: #ffffff;
+                    border: 1px solid #666666;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+            """)
+            # Update status label for dark theme
+            self.status_label.setStyleSheet("color: #00aa00; padding: 2px;")
+        else:
+            # Light theme (default)
+            self.setStyleSheet("")
+            self.status_label.setStyleSheet("color: #005500; padding: 2px;")
 
     def on_result_selection(self, index):
         if self.sql_query_page:

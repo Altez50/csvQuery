@@ -60,6 +60,9 @@ class TableEditDialog(QDialog):
 
     def _copy_table_to_temp_db(self):
         src = self.sqlite_conn
+        if src is None:
+            print("Warning: sqlite_conn is None, cannot copy table to temp db")
+            return
         dst = sqlite3.connect(self._tmp_dbfile.name)
         cur = src.cursor()
         dcur = dst.cursor()
@@ -116,6 +119,9 @@ class TableEditDialog(QDialog):
     def _copy_table_back(self):
         # Копируем изменённую таблицу обратно в основную БД
         if not self._modified:
+            return
+        if self.sqlite_conn is None:
+            print("Warning: sqlite_conn is None, cannot copy table back")
             return
         src = sqlite3.connect(self._tmp_dbfile.name)
         dst = self.sqlite_conn

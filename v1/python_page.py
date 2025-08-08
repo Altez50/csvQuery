@@ -61,7 +61,11 @@ class PythonPage(QWidget):
         layout.addLayout(bottom_panel)
         
         self.output_label = QLabel('')
-        self.output_label.setStyleSheet('color: #005500; background: #f0f0f0; padding: 4px;')
+        # Адаптивные цвета для темной/светлой темы
+        if hasattr(self.main_window, 'dark_theme') and self.main_window.dark_theme:
+            self.output_label.setStyleSheet('color: #88cc88; background: #2a2a2a; padding: 4px;')
+        else:
+            self.output_label.setStyleSheet('color: #005500; background: #f0f0f0; padding: 4px;')
         self.output_label.setWordWrap(True)
         layout.addWidget(self.output_label)
 
@@ -83,7 +87,11 @@ class PythonPage(QWidget):
                 json.dump(self.snippets, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.output_label.setText(f"Не удалось сохранить сниппеты: {e}")
-            self.output_label.setStyleSheet('color: #aa0000;')
+            # Адаптивные цвета для темной/светлой темы
+            if hasattr(self.main_window, 'dark_theme') and self.main_window.dark_theme:
+                self.output_label.setStyleSheet('color: #ff8888;')
+            else:
+                self.output_label.setStyleSheet('color: #aa0000;')
 
     def execute_code(self):
         code = self.code_edit.text()
@@ -96,7 +104,11 @@ class PythonPage(QWidget):
         try:
             exec(code, {}, local_vars)
             self.output_label.setText('Код выполнен успешно.')
-            self.output_label.setStyleSheet('color: #005500; background: #f0fff0; padding: 4px;')
+            # Адаптивные цвета для темной/светлой темы
+            if hasattr(self.main_window, 'dark_theme') and self.main_window.dark_theme:
+                self.output_label.setStyleSheet('color: #88cc88; background: #1a3a1a; padding: 4px;')
+            else:
+                self.output_label.setStyleSheet('color: #005500; background: #f0fff0; padding: 4px;')
             
             # Activate window
             target = self.activation_selector.currentText()
@@ -111,7 +123,11 @@ class PythonPage(QWidget):
         except Exception:
             tb = traceback.format_exc()
             self.output_label.setText(f'Ошибка:\n{tb}')
-            self.output_label.setStyleSheet('color: #aa0000; background: #fff0f0; padding: 4px;')
+            # Адаптивные цвета для темной/светлой темы
+            if hasattr(self.main_window, 'dark_theme') and self.main_window.dark_theme:
+                self.output_label.setStyleSheet('color: #ff8888; background: #3a1a1a; padding: 4px;')
+            else:
+                self.output_label.setStyleSheet('color: #aa0000; background: #fff0f0; padding: 4px;')
 
     def open_snippet_dialog(self):
         if self.snippet_tree_dialog is None:
@@ -150,4 +166,4 @@ class PythonPage(QWidget):
             if column == 0: # Имя группы
                 self.snippets[group_idx]['name'] = item.text(0)
         
-        self.save_snippets() 
+        self.save_snippets()

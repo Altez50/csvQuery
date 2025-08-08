@@ -31,12 +31,6 @@ class GroupByDialog(QDialog):
         self.tree.customContextMenuRequested.connect(self.show_groupby_menu)
         self._settings = QSettings('csvQuery', 'GroupByDialog')
         self.restore_geometry()
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # ... существующий код ...
-        self._settings = QSettings('csvQuery', 'GroupByDialog')
-        self.restore_geometry()
     def closeEvent(self, event):
         self.save_geometry()
         super().closeEvent(event)
@@ -124,4 +118,4 @@ class GroupByDialog(QDialog):
         for i in range(items):
             item = tree.topLevelItem(i) if parent_item is None else parent_item.child(i)
             rows.append([item.text(j) for j in range(tree.columnCount())])
-            self._collect_tree_rows(tree, rows, item) 
+            self._collect_tree_rows(tree, rows, item)

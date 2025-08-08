@@ -3,7 +3,7 @@ from PyQt5.QtCore import Qt, QFileSystemWatcher, QProcess, QEvent
 import sqlite3
 import pandas as pd
 from ui_column_select import ColumnSelectDialog
-from PyQt5.QtGui import QClipboard, QFont
+from PyQt5.QtGui import QClipboard, QFont, QIcon
 from PyQt5.QtWidgets import QApplication
 import json
 import os
@@ -13,6 +13,7 @@ from query_tree_dialog import QueryTreeDialog
 from results_dialog import ResultsDialog
 import tempfile
 from PyQt5.QtWidgets import QMessageBox
+from sql_query_constructor import SQLQueryConstructorDialog
 
 HISTORY_FILE = 'query_history.json'
 EDITOR_SETTINGS_FILE = 'editor_settings.json'
@@ -167,11 +168,24 @@ class SQLQueryPage(QWidget):
         self.add_cte_selects_btn = QPushButton("SELECT для CTE")
         self.add_cte_selects_btn.setFixedWidth(120)
         self.add_cte_selects_btn.clicked.connect(self.add_cte_selects)
+        self.query_constructor_btn = QPushButton("Конструктор запросов")
+        self.query_constructor_btn.setFixedWidth(150)
+        self.query_constructor_btn.clicked.connect(self.open_query_constructor)
         sql_toolbar.addWidget(self.find_btn)
         sql_toolbar.addWidget(self.replace_btn)
         sql_toolbar.addWidget(self.insert_field_btn)
         sql_toolbar.addWidget(self.add_cte_selects_btn)
+        sql_toolbar.addWidget(self.query_constructor_btn)
         sql_toolbar.addStretch()
+        
+        # SQL Editor Settings gear button
+        self.sql_settings_btn = QPushButton()
+        self.sql_settings_btn.setIcon(QIcon("icons/settings-gear.svg"))
+        self.sql_settings_btn.setFixedSize(30, 30)
+        self.sql_settings_btn.setToolTip("Настройки редактора SQL")
+        self.sql_settings_btn.clicked.connect(self.open_editor_options)
+        sql_toolbar.addWidget(self.sql_settings_btn)
+        
         layout.addLayout(sql_toolbar)
         # SQL editor and task numbers side by side
         sql_task_layout = QHBoxLayout()
@@ -491,8 +505,7 @@ class SQLQueryPage(QWidget):
         self.save_query_to_history()
         # Показываем окно результатов всегда при попытке выполнить запрос
         if self.results_dialog is None:
-            self.results_dialog = ResultsDialog()
-        self.results_dialog.sql_query_page = self
+            self.results_dialog = ResultsDialog(self)
         self.results_dialog.update_results_view()
         self.results_dialog.show()
         self.results_dialog.raise_()
@@ -839,12 +852,26 @@ class SQLQueryPage(QWidget):
 
     def open_results_dialog(self):
         if self.results_dialog is None:
-            self.results_dialog = ResultsDialog()
-        self.results_dialog.sql_query_page = self
+            self.results_dialog = ResultsDialog(self)
         self.results_dialog.update_results_view()
         self.results_dialog.show()
         self.results_dialog.raise_()
-        self.results_dialog.activateWindow() 
+        self.results_dialog.activateWindow()
+
+    def open_query_constructor(self):
+        """Open the SQL Query Constructor dialog"""
+        if not self.conn:
+            self.set_status("Нет подключения к базе данных. Сначала загрузите таблицы.", color="#aa0000")
+            return
+        
+        constructor_dialog = SQLQueryConstructorDialog(self.conn, self)
+        constructor_dialog.query_generated.connect(self.on_query_generated)
+        constructor_dialog.exec_()
+    
+    def on_query_generated(self, query):
+        """Handle the generated query from the constructor"""
+        self.sql_edit.setText(query)
+        self.set_status("Запрос сгенерирован конструктором", color="#005500") 
 
     def show_sql_context_menu(self, pos):
         menu = self.sql_edit.createStandardContextMenu()

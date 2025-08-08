@@ -503,22 +503,37 @@ class TableCompareDialog(QWidget):
                     else:
                         # Значения различаются - синяя рамка
                         item.setText(f'{a_value} | {b_value}')
-                        item.setBackground(QColor(238, 238, 255))  # Светло-синий фон
-                        item.setForeground(QColor(0, 0, 204))      # Синий текст
+                        # Адаптивные цвета для темной/светлой темы
+                        if hasattr(self.parent(), 'dark_theme') and self.parent().dark_theme:
+                            item.setBackground(QColor(40, 40, 80))   # Темно-синий фон для темной темы
+                            item.setForeground(QColor(120, 120, 255)) # Светло-синий текст для темной темы
+                        else:
+                            item.setBackground(QColor(238, 238, 255)) # Светло-синий фон для светлой темы
+                            item.setForeground(QColor(0, 0, 204))     # Синий текст для светлой темы
                         item.setData(Qt.UserRole, "different")
                         item.setToolTip(f"Таблица A: {a_value}\nТаблица B: {b_value}")
                 elif a_value is not None:
                     # Есть только в таблице A - красная рамка
                     item.setText(str(a_value))
-                    item.setBackground(QColor(255, 238, 238))  # Светло-красный фон
-                    item.setForeground(QColor(204, 0, 0))      # Красный текст
+                    # Адаптивные цвета для темной/светлой темы
+                    if hasattr(self.parent(), 'dark_theme') and self.parent().dark_theme:
+                        item.setBackground(QColor(80, 40, 40))    # Темно-красный фон для темной темы
+                        item.setForeground(QColor(255, 120, 120)) # Светло-красный текст для темной темы
+                    else:
+                        item.setBackground(QColor(255, 238, 238)) # Светло-красный фон для светлой темы
+                        item.setForeground(QColor(204, 0, 0))     # Красный текст для светлой темы
                     item.setData(Qt.UserRole, "only_a")
                     item.setToolTip(f"Только в таблице A: {a_value}")
                 elif b_value is not None:
                     # Есть только в таблице B - зеленая рамка
                     item.setText(str(b_value))
-                    item.setBackground(QColor(238, 255, 238))  # Светло-зеленый фон
-                    item.setForeground(QColor(0, 136, 0))      # Зеленый текст
+                    # Адаптивные цвета для темной/светлой темы
+                    if hasattr(self.parent(), 'dark_theme') and self.parent().dark_theme:
+                        item.setBackground(QColor(40, 80, 40))    # Темно-зеленый фон для темной темы
+                        item.setForeground(QColor(120, 255, 120)) # Светло-зеленый текст для темной темы
+                    else:
+                        item.setBackground(QColor(238, 255, 238)) # Светло-зеленый фон для светлой темы
+                        item.setForeground(QColor(0, 136, 0))     # Зеленый текст для светлой темы
                     item.setData(Qt.UserRole, "only_b")
                     item.setToolTip(f"Только в таблице B: {b_value}")
                 
@@ -555,18 +570,28 @@ class TableCompareDialog(QWidget):
         legend_layout = QHBoxLayout()
         legend_layout.addWidget(QLabel("Легенда:"))
         
+        # Адаптивные цвета для легенды в зависимости от темы
+        if hasattr(self.parent(), 'dark_theme') and self.parent().dark_theme:
+            red_bg = "#502828"    # Темно-красный для темной темы
+            green_bg = "#285028"  # Темно-зеленый для темной темы
+            blue_bg = "#282850"   # Темно-синий для темной темы
+        else:
+            red_bg = "#ffeeee"    # Светло-красный для светлой темы
+            green_bg = "#eeffee"  # Светло-зеленый для светлой темы
+            blue_bg = "#eeeeff"   # Светло-синий для светлой темы
+        
         red_box = QLabel()
-        red_box.setStyleSheet("background-color: #ffeeee; border: 2px solid red; min-width: 20px; min-height: 20px;")
+        red_box.setStyleSheet(f"background-color: {red_bg}; border: 2px solid red; min-width: 20px; min-height: 20px;")
         legend_layout.addWidget(red_box)
         legend_layout.addWidget(QLabel("Есть в A, нет в B"))
         
         green_box = QLabel()
-        green_box.setStyleSheet("background-color: #eeffee; border: 2px solid green; min-width: 20px; min-height: 20px;")
+        green_box.setStyleSheet(f"background-color: {green_bg}; border: 2px solid green; min-width: 20px; min-height: 20px;")
         legend_layout.addWidget(green_box)
         legend_layout.addWidget(QLabel("Есть в B, нет в A"))
         
         blue_box = QLabel()
-        blue_box.setStyleSheet("background-color: #eeeeff; border: 2px solid blue; min-width: 20px; min-height: 20px;")
+        blue_box.setStyleSheet(f"background-color: {blue_bg}; border: 2px solid blue; min-width: 20px; min-height: 20px;")
         legend_layout.addWidget(blue_box)
         legend_layout.addWidget(QLabel("Есть в A и B, но не равны"))
         

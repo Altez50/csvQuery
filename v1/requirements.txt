@@ -1,3 +1,5 @@
-PyQt5
-pandas
-QScintilla 
+PyQt5==5.15.10
+pandas==2.2.0
+QScintilla==2.14.1
+requests==2.32.3
+pyinstaller==6.15.0
